@@ -1,0 +1,593 @@
+from PyQt6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QCheckBox,
+    QFrame,
+    QGridLayout,
+    QComboBox,
+    QLineEdit,
+    QListWidget,
+    QStyledItemDelegate,
+)
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSettings, QRect
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
+import config
+
+
+class TFCheckBox(QCheckBox):
+    """Чекбокс с поддержкой двойного клика и собственным рисованием галочки"""
+
+    double_clicked = pyqtSignal(str)  # Передаём ключ таймфрейма
+
+    def __init__(self, text, tf_key, parent=None):
+        super().__init__(text, parent)
+        self.tf_key = tf_key
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.double_clicked.emit(self.tf_key)
+        super().mouseDoubleClickEvent(event)
+
+    def paintEvent(self, event):
+        """Переопределяем рисование для кастомной галочки"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        indicator_rect_x = 2
+        indicator_rect_y = (self.height() - 16) // 2
+        indicator_rect = QRect(indicator_rect_x, indicator_rect_y, 16, 16)
+
+        if self.isChecked():
+            painter.fillRect(indicator_rect, QColor("#1e90ff"))
+            painter.setPen(QPen(QColor("#1e90ff"), 2))
+            painter.drawRect(indicator_rect)
+
+            pen = QPen(QColor("black"), 2, Qt.PenStyle.SolidLine)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+
+            x = indicator_rect_x
+            y = indicator_rect_y
+            painter.drawLine(int(x + 3), int(y + 9), int(x + 7), int(y + 13))
+            painter.drawLine(int(x + 7), int(y + 13), int(x + 13), int(y + 5))
+        else:
+            painter.setPen(QPen(QColor("#555"), 2))
+            painter.drawRect(indicator_rect)
+
+        text_color = QColor("#bbb") if self.isEnabled() else QColor("#666")
+        painter.setPen(text_color)
+        text_rect = QRect(25, 0, self.width() - 30, self.height())
+        painter.drawText(
+            text_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            self.text(),
+        )
+        painter.end()
+
+
+class CenteredItemDelegate(QStyledItemDelegate):
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        option.displayAlignment = Qt.AlignmentFlag.AlignCenter
+
+
+class CenteredComboBox(QComboBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._ignore_next_hide = False
+
+    def mousePressEvent(self, event):
+        # For non-editable combo, open popup on any click except drop-down arrow area
+        if event.pos().x() < self.width() - 25:
+            if not self.view().isVisible():
+                self._ignore_next_hide = True
+                self.showPopup()
+        event.accept()
+
+    def hidePopup(self):
+        if self._ignore_next_hide:
+            self._ignore_next_hide = False
+            return  # Ignore this immediate hide call
+        super().hidePopup()
+
+    def mouseReleaseEvent(self, event):
+        # Make sure selection works properly
+        super().mouseReleaseEvent(event)
+
+
+class NoSelectLineEdit(QLineEdit):
+    """QLineEdit that prevents text selection and responds to clicks by showing popup"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._combo = None
+
+    def setCombo(self, combo):
+        self._combo = combo
+
+    def mousePressEvent(self, event):
+        if self._combo and not self._combo.view().isVisible():
+            self._combo.showPopup()
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event):
+        # Block double-click selection
+        event.ignore()
+
+    def contextMenuEvent(self, event):
+        # Block context menu
+        event.ignore()
+
+    def keyPressEvent(self, event):
+        # Block Ctrl+A
+        if (
+            event.key() == Qt.Key.Key_A
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            event.ignore()
+            return
+        super().keyPressEvent(event)
+
+
+class CustomTitleBar(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.setFixedHeight(40)
+        self.setStyleSheet(
+            f"background-color: {config.COLORS['panel']}; border-top-left-radius: 15px; border-top-right-radius: 15px; border-bottom: 1px solid #222;"
+        )
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(15, 0, 0, 0)
+        layout.setSpacing(0)
+        self.logo_label = QLabel()
+        # Ленивая загрузка логотипа - загружаем только при первом обращении
+        self._logo_loaded = False
+        self.logo_label.setStyleSheet("background: transparent; border: none;")
+        layout.addWidget(self.logo_label)
+        layout.addSpacing(8)
+        self.title_label = QLabel(config.APP_NAME.upper())
+        fixed_blue = "#1e90ff"
+        self.title_label.setStyleSheet(
+            f"color: {fixed_blue}; font-family: 'Segoe UI Semibold'; font-size: 12px; letter-spacing: 2px; background: transparent; border: none;"
+        )
+        layout.addWidget(self.title_label)
+        layout.addStretch()
+
+        # Кнопки справа (шестеренка, свернуть, закрыть) — плотно, как "мордочка"
+        button_group = QWidget()
+        button_group.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        button_group.setStyleSheet("background: transparent;")
+        group_layout = QHBoxLayout(button_group)
+        group_layout.setContentsMargins(0, 0, 0, 0)
+        group_layout.setSpacing(0)
+
+        settings_btn = QPushButton("⚙")
+        settings_btn.setFixedSize(34, 40)
+        settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        settings_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #888; border: none; font-size: 18px; padding-left: 4px; }"
+            "QPushButton:hover { background: transparent; color: #1e90ff; border: 2px solid #1e90ff; }"
+        )
+        settings_btn.clicked.connect(self.parent.open_settings)
+        group_layout.addWidget(settings_btn)
+
+        minimize_btn = QPushButton("")
+        minimize_btn.setFixedSize(34, 40)
+        minimize_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        minimize_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #888; border: none; font-family: 'Segoe MDL2 Assets'; font-size: 12px; padding-left: 4px; }"
+            "QPushButton:hover { background: #333; color: white; }"
+        )
+        minimize_btn.clicked.connect(self.parent.showMinimized)
+
+        minimize_wrap = QWidget()
+        minimize_wrap.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        minimize_wrap.setStyleSheet("background: transparent;")
+        minimize_layout = QVBoxLayout(minimize_wrap)
+        minimize_layout.setContentsMargins(0, 12, 0, 0)
+        minimize_layout.setSpacing(0)
+        minimize_layout.addWidget(minimize_btn)
+        group_layout.addWidget(minimize_wrap)
+
+        close_btn = QPushButton("")
+        close_btn.setFixedSize(34, 40)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {config.COLORS['danger']}; border: none; font-family: 'Segoe MDL2 Assets'; font-size: 12px; }} QPushButton:hover {{ background: {config.COLORS['danger']}; color: white; }}"
+        )
+        close_btn.setStyleSheet(
+            close_btn.styleSheet() + "border-top-right-radius: 15px;"
+        )
+        close_btn.clicked.connect(self.parent.close)
+        group_layout.addWidget(close_btn)
+
+        layout.addWidget(button_group)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.parent.old_pos = event.globalPosition().toPoint()
+
+    def mouseMoveEvent(self, event):
+        if self.parent.old_pos:
+            delta = event.globalPosition().toPoint() - self.parent.old_pos
+            self.parent.move(self.parent.x() + delta.x(), self.parent.y() + delta.y())
+            self.parent.old_pos = event.globalPosition().toPoint()
+
+    def mouseReleaseEvent(self, event):
+        self.parent.old_pos = None
+        # Сохраняем позицию окна после перетаскивания
+        if hasattr(self.parent, "save_settings"):
+            self.parent.save_settings()
+
+    def showEvent(self, event):
+        """Загружаем логотип при первом отображении (ленивая загрузка)"""
+        if not self._logo_loaded:
+            self._load_logo()
+        super().showEvent(event)
+
+    def _load_logo(self):
+        """Ленивая загрузка логотипа - вызывается только при первом показе"""
+        try:
+            pix = QPixmap(config.LOGO_PATH).scaled(
+                22,
+                22,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation,
+            )
+            self.logo_label.setPixmap(pix)
+            self._logo_loaded = True
+        except Exception:
+            pass
+
+
+class UI_Widget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.main_window = parent
+        self.old_pos = None
+        self.trans = {
+            "ru": {
+                "vol": "ГРОМКОСТЬ",
+                "font": "РАЗМЕР ЧАСОВ",
+                "scale": "МАСШТАБ ИНТЕРФЕЙСА",
+                "show": "ОТОБРАЖАТЬ ЧАСЫ (OVERLAY)",
+                "btn": "ЦВЕТ ЧАСОВ",
+                "mode": "Режим:",
+                "select_app": "Выбрать приложения",
+                "always_show": "Всегда показывать",
+                "custom_windows": "Только на определённых окнах",
+                "tfs": {
+                    "1m": "1м",
+                    "5m": "5м",
+                    "15m": "15м",
+                    "30m": "30м",
+                    "1h": "1ч",
+                    "4h": "4ч",
+                    "1d": "1д",
+                    "1w": "1н",
+                    "1M": "1мес",
+                },
+            },
+            "en": {
+                "vol": "VOLUME",
+                "font": "CLOCK SIZE",
+                "scale": "INTERFACE SCALE",
+                "show": "DISPLAY CLOCK (OVERLAY)",
+                "btn": "CLOCK COLOR",
+                "mode": "Mode:",
+                "select_app": "Select Applications",
+                "always_show": "Always Show",
+                "custom_windows": "Only on Specific Windows",
+                "tfs": {
+                    "1m": "1m",
+                    "5m": "5m",
+                    "15m": "15m",
+                    "30m": "30m",
+                    "1h": "1h",
+                    "4h": "4h",
+                    "1d": "1d",
+                    "1w": "1w",
+                    "1M": "1mo",
+                },
+            },
+        }
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(20, 10, 20, 20)
+        self.main_layout.setSpacing(10)
+
+        # Язык (скрытый, управляется через настройки)
+        self.lang_sel = QComboBox()
+        self.lang_sel.addItems(["RU", "EN"])
+        self.lang_sel.setVisible(False)  # Теперь управляется через окно настроек
+
+        # ТФ
+        self.card_tf = QFrame()
+        self.card_tf.setStyleSheet(
+            "QFrame { background: #161616; border-radius: 12px; border: 1px solid #252525; }"
+        )
+        self.card_tf_layout = QVBoxLayout(self.card_tf)
+        self.card_tf_layout.setContentsMargins(10, 10, 10, 10)
+        self.card_tf_layout.setSpacing(8)
+        self.grid = QGridLayout()
+        self.checkboxes = {}
+        self.create_tf_widgets("ru")
+        self.card_tf_layout.addLayout(self.grid)
+
+        # Слайдер громкости внутри блока ТФ, под галочками
+        vol_lay = QHBoxLayout()
+        vol_lay.setContentsMargins(4, 0, 4, 0)
+        self.l_vol = QLabel("ГРОМКОСТЬ")
+        self.l_vol.setStyleSheet(
+            "color:#888; font-weight:bold; font-size: 10px; border: none; background: transparent;"
+        )
+        self.volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.setStyleSheet(self._slider_style())
+        vol_lay.addWidget(self.l_vol)
+        vol_lay.addWidget(self.volume_slider)
+        self.card_tf_layout.addLayout(vol_lay)
+
+        self.main_layout.addWidget(self.card_tf)
+
+        # Блок настроек Overlay: размер, отображение, режим, выбор приложений, цвет
+        self.card_overlay = QFrame()
+        self.card_overlay.setStyleSheet(self._card_style(padding="12px"))
+        overlay_lay = QVBoxLayout(self.card_overlay)
+        overlay_lay.setSpacing(8)
+
+        # 1) Чекбокс отображения часов (используем TFCheckBox чтобы получить чёрную галочку)
+        self.cb_overlay = TFCheckBox(self.trans["ru"]["show"], "overlay")
+        self.cb_overlay.setStyleSheet(self._tf_check_style())
+        overlay_lay.addWidget(self.cb_overlay)
+
+        # 2) Режим (ниже чекбокса)
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(0)
+        self.overlay_mode_label = QLabel(self.trans["ru"]["mode"])
+        self.overlay_mode_label.setStyleSheet(
+            "color:#888; font-weight:bold; font-size: 10px;"
+        )
+        self.overlay_mode_combo = CenteredComboBox()
+        # Non-editable combo: add items first, use paintEvent to center display text
+        self.overlay_mode_combo.addItems(
+            [self.trans["ru"]["always_show"], self.trans["ru"]["custom_windows"]]
+        )
+        self.overlay_mode_combo.setStyleSheet(self._combo_style())
+        self.overlay_mode_combo.setItemDelegate(
+            CenteredItemDelegate(self.overlay_mode_combo)
+        )
+        for i in range(self.overlay_mode_combo.count()):
+            self.overlay_mode_combo.setItemData(
+                i, Qt.AlignmentFlag.AlignCenter, Qt.ItemDataRole.TextAlignmentRole
+            )
+        self.overlay_mode_combo.setMinimumContentsLength(20)
+        self.overlay_mode_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.overlay_mode_combo.setMinimumWidth(220)
+        mode_layout.addWidget(self.overlay_mode_label)
+        mode_layout.addWidget(self.overlay_mode_combo)
+        mode_layout.addStretch()
+        overlay_lay.addLayout(mode_layout)
+
+        # 3) Кнопка выбора приложений (под режимом) — может скрываться если режим "Всегда показывать"
+        select_app_layout = QHBoxLayout()
+        select_app_layout.setSpacing(8)
+        self.select_app_btn = QPushButton(self.trans["ru"]["select_app"])
+        self.select_app_btn.setStyleSheet(self._select_app_style())
+        self.select_app_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.select_app_btn.setMinimumWidth(200)
+        select_app_layout.addStretch()
+        select_app_layout.addWidget(self.select_app_btn)
+        select_app_layout.addStretch()
+        overlay_lay.addLayout(select_app_layout)
+
+        # 4) Слайдер размера часов (уменьшенный)
+        h2 = QHBoxLayout()
+        self.l_size = QLabel(self.trans["ru"]["font"])
+        self.l_size.setStyleSheet("color:#888; font-weight:bold; font-size: 9px;")
+        self.ov_size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.ov_size_slider.setRange(20, 150)
+        self.ov_size_slider.setStyleSheet(self._small_slider_style())
+        self.ov_size_slider.setFixedHeight(14)
+        h2.addWidget(self.l_size)
+        h2.addWidget(self.ov_size_slider)
+        overlay_lay.addLayout(h2)
+
+        # 5) Кнопка цвета часов — под размером, слева
+        color_layout = QHBoxLayout()
+        color_layout.setContentsMargins(0, 0, 0, 0)
+        self.color_btn = QPushButton(self.trans["ru"]["btn"])
+        self.color_btn.setStyleSheet(self._color_btn_style())
+        self.color_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.color_btn.setFont(self.l_size.font())
+        self.color_btn.setSizePolicy(
+            self.color_btn.sizePolicy().Policy.Fixed,
+            self.color_btn.sizePolicy().Policy.Fixed,
+        )
+        self._sync_color_btn_size()
+        QTimer.singleShot(0, self._sync_color_btn_size)
+        color_layout.addWidget(self.color_btn)
+        color_layout.setAlignment(self.color_btn, Qt.AlignmentFlag.AlignLeft)
+        color_layout.addStretch()
+        overlay_lay.addLayout(color_layout)
+
+        self.main_layout.addWidget(self.card_overlay)
+
+        # --- УПРАВЛЕНИЕ ОКНАМИ OVERLAY ---
+        # Подключаем отображение кнопки выбора приложений к изменениям режима
+        self.overlay_mode_combo.currentIndexChanged.connect(
+            self._on_overlay_mode_changed
+        )
+        # Инициалное состояние: скрыть кнопку если выбран "Всегда показывать"
+        if self.overlay_mode_combo.currentIndex() == 0:
+            self.select_app_btn.setVisible(False)
+        else:
+            self.select_app_btn.setVisible(True)
+
+        # Невидимый лейбл для логики
+        self.time_label = QLabel("")
+        self.time_label.hide()
+
+    def create_tf_widgets(self, lang_key):
+        from PyQt6.QtCore import QSettings
+
+        # Сохраняем текущее состояние галочек из UI (перед пересозданием)
+        saved_states_from_ui = {}
+        for key, cb in self.checkboxes.items():
+            saved_states_from_ui[key] = cb.isChecked()
+
+        # Удаляем старые виджеты
+        for i in reversed(range(self.grid.count())):
+            w = self.grid.itemAt(i).widget()
+            if w:
+                w.setParent(None)
+
+        # Создаем новые с сохраненными состояниями (для смены языка)
+        tfs = self.trans[lang_key]["tfs"]
+        for i, (key, data) in enumerate(config.TIMEFRAMES.items()):
+            cb = TFCheckBox(tfs.get(key, data["label"]), key)
+            # Получаем переведённый label для тултипа
+            settings = QSettings("MyTradeTools", "TF-Alerter")
+            current_lang = settings.value("language", "RU")
+            tooltip_label = config.get_timeframe_label(key, current_lang)
+            cb.setToolTip(tooltip_label + " (Двойной клик для теста звука)")
+            # Восстанавливаем состояние из UI (перед пересозданием)
+            # Состояние из реестра будет установлено в load_settings()
+            cb.setChecked(saved_states_from_ui.get(key, False))
+            cb.setStyleSheet(self._tf_check_style())
+            self.checkboxes[key] = cb
+            self.grid.addWidget(cb, i // 4, i % 4)
+
+    def _small_slider_style(self):
+        return f"QSlider::groove:horizontal {{ background: #222; height: 4px; border-radius: 2px; }} QSlider::handle:horizontal {{ background: white; border: 1px solid {config.COLORS['accent']}; width: 10px; height: 10px; margin: -4px 0; border-radius: 5px; }}"
+
+    def _sync_color_btn_size(self):
+        try:
+            label_hint = self.l_size.sizeHint()
+            self.color_btn.setMinimumSize(label_hint.width(), label_hint.height())
+            self.color_btn.setMaximumSize(label_hint.width(), label_hint.height())
+        except Exception:
+            pass
+
+    def _on_overlay_mode_changed(self, index_or_text):
+        # If index 0 (first item) => "Всегда показывать" -> hide select_app_btn
+        try:
+            idx = self.overlay_mode_combo.currentIndex()
+            if idx == 0:
+                self.select_app_btn.setVisible(False)
+            else:
+                self.select_app_btn.setVisible(True)
+        except Exception:
+            pass
+
+    def change_language(self, lang):
+        l_key = lang.lower()
+        t = self.trans[l_key]
+
+        # Обновляем текстовые метки настроек
+        self.l_vol.setText(t["vol"])
+        self.l_size.setText(t["font"])
+
+        # Обновляем чекбокс и кнопку
+        self.cb_overlay.setText(t["show"])
+        self.color_btn.setText(t["btn"])
+        self._sync_color_btn_size()
+
+        # Обновляем элементы режима
+        self.overlay_mode_label.setText(t["mode"])
+        self.overlay_mode_combo.blockSignals(True)
+        current_idx = self.overlay_mode_combo.currentIndex()
+        self.overlay_mode_combo.clear()
+        self.overlay_mode_combo.addItems([t["always_show"], t["custom_windows"]])
+        self.overlay_mode_combo.setCurrentIndex(current_idx)
+        self.overlay_mode_combo.blockSignals(False)
+
+        # Обновляем кнопку выбора приложений
+        self.select_app_btn.setText(t["select_app"])
+
+        # Пересоздаем виджеты таймфреймов с новым языком
+        self.create_tf_widgets(l_key)
+
+        # Переподключаем сигналы чекбоксов после пересоздания
+        if self.main_window and hasattr(self.main_window, "reconnect_checkbox_signals"):
+            self.main_window.reconnect_checkbox_signals()
+
+    def mousePressEvent(self, event):
+        """Начало перетаскивания окна"""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.old_pos = event.globalPosition().toPoint()
+
+    def mouseMoveEvent(self, event):
+        """Перетаскивание окна"""
+        if self.old_pos and self.main_window:
+            delta = event.globalPosition().toPoint() - self.old_pos
+            self.main_window.move(
+                self.main_window.x() + delta.x(), self.main_window.y() + delta.y()
+            )
+            self.old_pos = event.globalPosition().toPoint()
+
+    def mouseReleaseEvent(self, event):
+        """Окончание перетаскивания"""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.old_pos = None
+            # Сохраняем позицию окна после перетаскивания
+            if self.main_window and hasattr(self.main_window, "save_settings"):
+                self.main_window.save_settings()
+
+    def _card_style(self, padding="10px"):
+        return f"QFrame {{ background: #161616; border-radius: 12px; border: 1px solid #252525; padding: {padding}; }}"
+
+    def _tf_check_style(self):
+        return """
+            QCheckBox {{ 
+                color: #bbb; 
+                border: none; 
+                spacing: 5px; 
+            }} 
+            QCheckBox::indicator {{ 
+                width: 16px; 
+                height: 16px; 
+                border-radius: 4px;
+                border: none;
+                background: transparent;
+                image: none;
+            }} 
+            QCheckBox::indicator:checked {{ 
+                image: none;
+            }}
+            QCheckBox::indicator:unchecked {{
+                background: transparent;
+            }}
+        """
+
+    def _check_style(self):
+        return f"QCheckBox {{ color: #bbb; border: none; spacing: 8px; }} QCheckBox::indicator {{ width: 18px; height: 18px; border: 2px solid #333; border-radius: 4px; }} QCheckBox::indicator:checked {{ background: {config.COLORS['accent']}; }}"
+
+    def _slider_style(self):
+        return f"QSlider::groove:horizontal {{ background: #222; height: 6px; border-radius: 3px; }} QSlider::handle:horizontal {{ background: white; border: 2px solid {config.COLORS['accent']}; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }}"
+
+    def _btn_style(self):
+        return f"QPushButton {{ color: {config.COLORS['accent']}; border: 2px solid {config.COLORS['accent']}; border-radius: 10px; font-weight: bold; padding: 5px; }} QPushButton:hover {{ background: {config.COLORS['accent']}; color: black; }}"
+
+    def _color_btn_style(self):
+        return f"QPushButton {{ color: {config.COLORS['accent']}; border: 2px solid {config.COLORS['accent']}; border-radius: 10px; font-weight: bold; padding: 0px; }} QPushButton:hover {{ background: {config.COLORS['accent']}; color: black; }}"
+
+    def _select_app_style(self):
+        fixed_blue = "#1e90ff"
+        return f"QPushButton {{ color: {fixed_blue}; border: 2px solid {fixed_blue}; border-radius: 10px; font-weight: bold; padding: 5px; }} QPushButton:hover {{ background: {fixed_blue}; color: black; }}"
+
+    def _combo_style(self):
+        fixed_blue = "#1e90ff"
+        return f"QComboBox {{ background: #1a1a1a; color: #888; border: 1px solid #333; border-radius: 6px; padding: 3px; font-size: 10px; margin-left: auto; margin-right: auto; }} QComboBox:hover {{ border: 1px solid {fixed_blue}; background: #202020; }} QComboBox::drop-down {{ border: none; }} QAbstractItemView {{ font-size: 10px; padding: 2px; }} QAbstractItemView::item {{ text-align: center; }} QComboBox QAbstractItemView::item {{ padding-left: 0px; padding-right: 0px; }}"
+
+    def _input_style(self):
+        return "QLineEdit { background: #1a1a1a; color: #888; border: 1px solid #333; border-radius: 6px; padding: 5px; }"
+
+    def _list_style(self):
+        return f"QListWidget {{ background: #1a1a1a; color: #bbb; border: 1px solid #333; border-radius: 6px; }} QListWidget::item:selected {{ background: {config.COLORS['accent']}; color: black; }} QListWidget::item {{ padding: 5px; }}"

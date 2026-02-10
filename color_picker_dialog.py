@@ -1,0 +1,315 @@
+from PyQt6.QtWidgets import (
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QFrame,
+    QColorDialog,
+)
+from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QSettings
+import config
+
+
+class ColorPickerDialog(QDialog):
+    def __init__(self, parent=None, current_color=None, current_alpha=255):
+        super().__init__(parent)
+        self.parent = parent
+        # Use provided color or fallback to configured accent
+        self.selected_color = QColor(
+            current_color or config.COLORS.get("accent", "#1e90ff")
+        )
+        self.selected_alpha = current_alpha
+        # Сохраняем исходные значения для восстановления при отмене
+        self.original_color = current_color or config.COLORS.get("accent", "#1e90ff")
+        self.original_alpha = current_alpha
+
+        # Словари переводов
+        self.translations = {
+            "RU": {
+                "title": "Выбор цвета",
+                "color": "Цвет:",
+                "opacity": "Прозрачность:",
+                "pick_color": "Выбрать цвет",
+                "cancel": "Отмена",
+                "ok": "OK",
+            },
+            "EN": {
+                "title": "Color Picker",
+                "color": "Color:",
+                "opacity": "Opacity:",
+                "pick_color": "Pick Color",
+                "cancel": "Cancel",
+                "ok": "OK",
+            },
+        }
+
+        # Получаем текущий язык
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        self.current_lang = settings.value("language", "RU")
+
+        self.setWindowTitle(self.translations[self.current_lang]["title"])
+        self.setFixedSize(400, 250)
+
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        # Главный контейнер
+        main_container = QFrame(self)
+        main_container.setStyleSheet(
+            f"""
+            QFrame {{
+                background-color: {config.COLORS['background']};
+                border: 1px solid {config.COLORS['border']};
+                border-radius: 10px;
+            }}
+        """
+        )
+        main_container.setGeometry(0, 0, 400, 250)
+
+        layout = QVBoxLayout(main_container)
+        layout.setContentsMargins(20, 15, 20, 15)
+        layout.setSpacing(12)
+
+        # Заголовок
+        title = QLabel(self.translations[self.current_lang]["title"])
+        title.setStyleSheet(
+            f"""
+            color: {config.COLORS['text']};
+            font-size: 14px;
+            font-weight: bold;
+            border: none;
+            background: transparent;
+        """
+        )
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        # Цвет
+        color_layout = QHBoxLayout()
+        color_label = QLabel(self.translations[self.current_lang]["color"])
+        color_label.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: 12px; border: none; background: transparent;"
+        )
+        self.color_btn = QPushButton()
+        self.color_btn.setFixedSize(50, 40)
+        self.update_color_button()
+        self.color_btn.clicked.connect(self.pick_color)
+        color_layout.addWidget(color_label)
+        color_layout.addStretch()
+        color_layout.addWidget(self.color_btn)
+        layout.addLayout(color_layout)
+
+        # Прозрачность
+        opacity_layout = QHBoxLayout()
+        opacity_label = QLabel(self.translations[self.current_lang]["opacity"])
+        opacity_label.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: 12px; border: none; background: transparent;"
+        )
+        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.opacity_slider.setMinimum(0)
+        self.opacity_slider.setMaximum(255)
+        self.opacity_slider.setValue(current_alpha)
+        self.opacity_slider.setStyleSheet(self._slider_style())
+
+        self.opacity_value = QLabel(f"{current_alpha}")
+        self.opacity_value.setFixedWidth(40)
+        self.opacity_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.opacity_value.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: 12px; border: none; background: transparent;"
+        )
+
+        # Подключаем live preview при изменении слайдера
+        self.opacity_slider.valueChanged.connect(self.on_opacity_changed)
+        self.opacity_slider.sliderMoved.connect(self.preview_changes)
+
+        opacity_layout.addWidget(opacity_label)
+        opacity_layout.addWidget(self.opacity_slider)
+        opacity_layout.addWidget(self.opacity_value)
+        layout.addLayout(opacity_layout)
+
+        layout.addSpacing(10)
+
+        # Кнопки
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        cancel_btn = QPushButton(self.translations[self.current_lang]["cancel"])
+        cancel_btn.setFixedHeight(32)
+        cancel_btn.setFixedWidth(100)
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.clicked.connect(self.reject)
+        cancel_btn.setStyleSheet(self._button_style())
+
+        ok_btn = QPushButton(self.translations[self.current_lang]["ok"])
+        ok_btn.setFixedHeight(32)
+        ok_btn.setFixedWidth(100)
+        ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        ok_btn.clicked.connect(self.accept)
+        ok_btn.setStyleSheet(self._button_style())
+
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addSpacing(5)
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
+        # Для перетаскивания
+        self.old_pos = None
+
+    def _button_style(self):
+        return f"""
+            QPushButton {{
+                background-color: {config.COLORS['panel']};
+                color: {config.COLORS['text']};
+                border: 1px solid {config.COLORS['border']};
+                border-radius: 5px;
+                padding: 5px 20px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {config.COLORS['hover']};
+                border: 1px solid {config.COLORS['text']};
+            }}
+        """
+
+    def _slider_style(self):
+        return f"""
+            QSlider::groove:horizontal {{
+                background-color: {config.COLORS['panel']};
+                height: 8px;
+                border-radius: 4px;
+                border: 1px solid {config.COLORS['border']};
+            }}
+            QSlider::handle:horizontal {{
+                background-color: {config.COLORS['accent']};
+                width: 16px;
+                margin: -4px 0;
+                border-radius: 8px;
+                border: 1px solid {config.COLORS['border']};
+            }}
+            QSlider::handle:horizontal:hover {{
+                background-color: #1e90ff;
+            }}
+        """
+
+    def update_color_button(self):
+        """Обновляет кнопку с текущим цветом"""
+        self.color_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {self.selected_color.name()};
+                border: 2px solid {config.COLORS['border']};
+                border-radius: 5px;
+            }}
+            QPushButton:hover {{
+                border: 2px solid {config.COLORS['accent']};
+            }}
+        """
+        )
+
+    def pick_color(self):
+        """Открывает стандартный диалог выбора цвета с live preview"""
+        # Используем non-modal диалог для live preview
+        if not hasattr(self, "color_dialog"):
+            self.color_dialog = None
+
+        if self.color_dialog is None:
+            self.color_dialog = QColorDialog(self.selected_color, self)
+            self.color_dialog.setOption(
+                QColorDialog.ColorDialogOption.ShowAlphaChannel, True
+            )
+            # Подключаемся к сигналу currentColorChanged для live preview при каждом изменении
+            self.color_dialog.currentColorChanged.connect(self.on_color_selected)
+            self.color_dialog.finished.connect(self.on_color_dialog_finished)
+            self.color_dialog.show()
+
+    def on_color_selected(self, color):
+        """Вызывается при каждом изменении цвета в диалоге"""
+        if color.isValid():
+            self.selected_color = color
+            self.update_color_button()
+            # Live preview: обновляем часы сразу при каждом движении/клике
+            self.preview_changes()
+
+    def on_color_dialog_finished(self, result):
+        """Вызывается когда закрывается диалог выбора цвета"""
+        # Если пользователь отменил (result == 0), восстанавливаем исходный цвет
+        if result == 0:  # 0 = Rejected/Cancel
+            self.selected_color = QColor(self.original_color)
+            self.update_color_button()
+            self.preview_changes()
+        self.color_dialog = None
+
+    def on_opacity_changed(self, value):
+        """Обновляет значение прозрачности"""
+        self.selected_alpha = value
+        self.opacity_value.setText(str(value))
+        # Live preview: обновляем часы сразу
+        self.preview_changes()
+
+    def preview_changes(self):
+        """Применяет изменения цвета и прозрачности к часам в реальном времени"""
+        if self.parent and hasattr(self.parent, "logic"):
+            try:
+                # Получаем текущий размер overlay из слайдера
+                overlay_size = (
+                    self.parent.ui.ov_size_slider.value()
+                    if hasattr(self.parent, "ui")
+                    else 40
+                )
+                # Обновляем стиль часов с новыми цветом и прозрачностью
+                self.parent.logic.overlay.update_style(
+                    self.selected_color.name(), overlay_size, self.selected_alpha
+                )
+            except Exception:
+                pass
+
+    def get_color_with_alpha(self):
+        """Возвращает цвет с прозрачностью в формате #RRGGBBAA"""
+        hex_color = self.selected_color.name()
+        alpha_hex = f"{self.selected_alpha:02x}"
+        return hex_color + alpha_hex
+
+    def get_color(self):
+        """Возвращает только цвет в формате #RRGGBB"""
+        return self.selected_color.name()
+
+    def get_alpha(self):
+        """Возвращает прозрачность (0-255)"""
+        return self.selected_alpha
+
+    def mousePressEvent(self, event):
+        """Начало перетаскивания окна"""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.old_pos = event.globalPosition().toPoint()
+
+    def mouseMoveEvent(self, event):
+        """Перетаскивание окна"""
+        if self.old_pos:
+            delta = event.globalPosition().toPoint() - self.old_pos
+            self.move(self.x() + delta.x(), self.y() + delta.y())
+            self.old_pos = event.globalPosition().toPoint()
+
+    def mouseReleaseEvent(self, event):
+        """Окончание перетаскивания"""
+        self.old_pos = None
+
+    def reject(self):
+        """Отмена - восстанавливаем исходные значения часов"""
+        # Восстанавливаем исходный цвет и прозрачность в overlay
+        if self.parent and hasattr(self.parent, "logic"):
+            try:
+                overlay_size = (
+                    self.parent.ui.ov_size_slider.value()
+                    if hasattr(self.parent, "ui")
+                    else 40
+                )
+                self.parent.logic.overlay.update_style(
+                    self.original_color, overlay_size, self.original_alpha
+                )
+            except Exception:
+                pass
+        super().reject()
