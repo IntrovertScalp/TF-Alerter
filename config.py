@@ -1,7 +1,6 @@
 import os
 import sys
 import shutil
-from crypto_utils import decrypt_address
 
 
 # --- 1. СИСТЕМНЫЕ НАСТРОЙКИ ---
@@ -57,58 +56,39 @@ WINDOW_SIZE = (360, 500)
 AUTHOR_NAME = "IntrovertScalp"
 YOUTUBE_URL = "https://www.youtube.com/@Introvert_Scalp"
 
-# --- КРИПТОАДРЕСА ДЛЯ ДОНАТОВ (ЗАШИФРОВАНЫ) ---
-# Адреса зашифрованы для защиты от простого редактирования
-# При добавлении новых адресов используй crypto_utils.encrypt_address()
-
-_CRYPTO_ADDRESSES_ENCRYPTED = {
+# --- КРИПТОАДРЕСА ДЛЯ ДОНАТОВ ---
+CRYPTO_ADDRESSES = {
     "BTC": {
         "label": "Bitcoin (BTC)",
         "network": "Bitcoin",
-        "address_encrypted": "gAAAAABph7GCESgAbLvXZtOPd3zTsu5Z8PD4IX2R51DMGs-27min4nWBWBh1owbKkCqo7LDQEN5P4T80X1k3a4ZglTQTTEFPM9I3ZLqjpf0ZMw8NmQigCZSBRqahlpuLGlsTb_DtEqdQ",
+        "address": "bc1qrzyz9j44hj0ex9q33fhghwxhg2clysxyq0ps9f",
     },
     "ETH": {
         "label": "Ethereum (ETH)",
         "network": "ERC20",
-        "address_encrypted": "gAAAAABph7GCgttLmOxp_gN4EqpcTDowQ3DRllnYF6rZAYwAo5xW4J_KjH-aeGWe2dYDHDlJ2smLH9Tz8MjLIVh3DSaZ_qNg7miNylxnIWerBwB9p66P9Yni3wfMe2unmvEoD2ynQZHb",
+        "address": "0x416E6544D8DCD9C4dDa2C10D394480F89642FaD7",
     },
     "BNB": {
         "label": "BNB (Binance Coin)",
         "network": "BEP20 (BSC)",
-        "address_encrypted": "gAAAAABph7GCu-nNBsdg-IAkBNRQmZgb-x4LHLV5DQzomhUlIFgMazURcvmSEc7my5K8GshGu9be8RMFoutdRDthl7hYniAqNbrbVb8awh5sUUsLWXUbzbQbHDeb87VyZsB6PZWs99QD",
+        "address": "0x416E6544D8DCD9C4dDa2C10D394480F89642FaD7",
     },
     "USDT_BEP20": {
         "label": "USDT",
         "network": "BEP20 (BNB Smart Chain)",
-        "address_encrypted": "gAAAAABph7GCxnniEWQGR1sPqLb2qmLX9knwGAhShwtQfK1RdnVVx9QP3qhkvc_zrfq7pzkOaFNx9VbHkjzaP30WXj6Mz4Bq4c2jxdSbgytE4nylagmlz00uPrTXhIhcBj7EQRfiSb97",
+        "address": "0x416E6544D8DCD9C4dDa2C10D394480F89642FaD7",
     },
     "USDT_TRC20": {
         "label": "USDT",
         "network": "TRC20 (Tron)",
-        "address_encrypted": "gAAAAABph7GC3r7cDg1e5rJ00mrPq7dd01m9aY2A9jpcXiDhFCTcNw676LY3kfM52ZgKp_XpK7gfbjyKK3pG1wUL0TWUyzZPQJiHGF56ppqX85irjq-Qv16xgfhgxkjE_WRcBPEfRig2",
+        "address": "TPuCWaaHgdCJEjhRp1wG1wQbWHgkd9Rpdq",
     },
     "USDT_ERC20": {
         "label": "USDT",
         "network": "ERC20 (Ethereum)",
-        "address_encrypted": "gAAAAABph7GCvzfJuzid6w1eVm9R356IsaWDEXX16jbdBs2ENwvmMTA0Wfn4at7JY-3bd8QxXVVI-zYXqafVhnAJnOxWSdsIuSSOAFPJXR4_q7xPPu_vZ0iXQU_kTaRVaTNEFBaZF6n_",
+        "address": "0x416E6544D8DCD9C4dDa2C10D394480F89642FaD7",
     },
 }
-
-
-def _decrypt_crypto_addresses():
-    """Расшифровывает адреса при инициализации"""
-    global CRYPTO_ADDRESSES
-    CRYPTO_ADDRESSES = {}
-    for key, data in _CRYPTO_ADDRESSES_ENCRYPTED.items():
-        CRYPTO_ADDRESSES[key] = {
-            "label": data["label"],
-            "network": data["network"],
-            "address": decrypt_address(data["address_encrypted"]),
-        }
-
-
-# Расшифровываем адреса при импорте
-_decrypt_crypto_addresses()
 
 # --- 3. ЦВЕТОВАЯ СХЕМА ---
 COLORS = {
