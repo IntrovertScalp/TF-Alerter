@@ -249,15 +249,19 @@ class AlerterLogic(QObject):
         if dt.minute == 0 and is_active("1h"):
             return "1h", "Часовая свеча закрыта!"
 
-        # 6. 15 Минут
+        # 6. 30 Минут
+        if dt.minute % 30 == 0 and is_active("30m"):
+            return "30m", "Свеча 30м закрыта!"
+
+        # 7. 15 Минут
         if dt.minute % 15 == 0 and is_active("15m"):
             return "15m", "Свеча 15м закрыта!"
 
-        # 7. 5 Минут
+        # 8. 5 Минут
         if dt.minute % 5 == 0 and is_active("5m"):
             return "5m", "Свеча 5м закрыта!"
 
-        # 8. 1 Минута
+        # 9. 1 Минута
         if is_active("1m"):
             # 1 минута закрывается каждую минуту
             return "1m", "Минутная свеча закрыта!"
