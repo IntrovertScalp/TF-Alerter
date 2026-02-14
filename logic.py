@@ -64,7 +64,7 @@ class AlerterLogic(QObject):
 
     def preload_sounds(self):
         """Предварительная загрузка всех звуков в кеш для мгновенного воспроизведения"""
-        print("📢 Предварительная загрузка звуков...")
+        print("[SOUND] Preloading sounds...")
 
         # Загружаем основные голосовые звуки (закрытие таймфреймов)
         for tf_key, tf_data in config.TIMEFRAMES.items():
@@ -72,9 +72,9 @@ class AlerterLogic(QObject):
             path = config.get_sound_path("main", filename)
             if path and os.path.exists(path):
                 self.sound_cache[f"main_{filename}"] = path
-                print(f"  ✓ {filename}")
+                print(f"  + {filename}")
             else:
-                print(f"  ⚠ {filename} - файл не найден")
+                print(f"  - {filename} not found")
 
         # Загружаем звуки тиков
         for tf_key, tick_sound in config.SOUND_TICK_BY_TF.items():
@@ -96,7 +96,7 @@ class AlerterLogic(QObject):
             if path and os.path.exists(path):
                 self.sound_cache[f"transition_{config.SOUND_TICK_LONG}"] = path
 
-        print(f"📢 Загружено звуков в кеш: {len(self.sound_cache)}")
+        print(f"[SOUND] Cache loaded: {len(self.sound_cache)} sounds")
 
     def _get_player_output(self, kind: str):
         if kind == "tick":
@@ -300,7 +300,7 @@ class AlerterLogic(QObject):
                 if os.path.exists(fallback_path):
                     path = fallback_path
                 else:
-                    print(f"⚠️ [{kind.upper()}] Звуковой файл не найден: {filename}")
+                    print(f"- [{kind.upper()}] Sound not found: {filename}")
                     return
 
         # Громкость 0-100% (макс 1.0) для ЧИСТОГО звучания без треска
@@ -322,11 +322,11 @@ class AlerterLogic(QObject):
         if tf_key in config.TIMEFRAMES:
             filename = config.TIMEFRAMES[tf_key]["file"]
             label = config.TIMEFRAMES[tf_key]["label"]
-            print(f"🔊 [TEST] Проигрываем звук для {label}: {filename}")
+            print(f"[TEST] Playing sound for {label}: {filename}")
             self.play_voice(filename, "main")
             self.time_signal.emit(f"[ТЕСТ] {label} закрыт!")
         else:
-            print(f"❌ Таймфрейм '{tf_key}' не найден в config.TIMEFRAMES")
+            print(f"! Timeframe '{tf_key}' not found in config.TIMEFRAMES")
 
     def start(self):
         self.timer.start(16)  # 60 FPS для максимально быстрого отклика на смену окна

@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QToolTip,
 )
 from PyQt6.QtGui import QColor, QIcon, QFont, QGuiApplication, QCursor
-from PyQt6.QtCore import Qt, QSettings, QTimer
+from PyQt6.QtCore import Qt, QSettings, QTimer, QEvent
 import config
 import gui
 import logic
@@ -99,6 +99,9 @@ class MainWindow(QMainWindow):
         # Переменная для перетаскивания окна
         self.old_pos = None
 
+        # Флаг для отслеживания авторизованного сворачивания (через горячую клавишу)
+        self._is_closing = False
+
         # Флаг для блокировки автосохранения во время загрузки
         self.loading_settings = True
         self.current_overlay_font = "Arial"
@@ -107,6 +110,16 @@ class MainWindow(QMainWindow):
         self.overlay_move_locked = False
         self.funding_alert_counter = 0
         self.funding_alert_entries = []
+        self.triggered_alerts = []  # Список завершённых алертов
+        self.max_triggered_alerts = 10  # Максимум зачеркнутых алертов
+        self._edge_tts_queue = []
+        self._edge_tts_busy = False
+        self._edge_tts_started = False
+        self._last_funding_sound_duration_ms = 1700
+        self._pending_tts_entries = {}
+        self._funding_tts_timer = QTimer()
+        self._funding_tts_timer.setSingleShot(True)
+        self._funding_tts_timer.timeout.connect(self._flush_funding_tts_queue)
 
         # --- ПОДКЛЮЧЕНИЕ СИГНАЛОВ ---
         self.ui.color_btn.clicked.connect(self.change_color)
@@ -168,12 +181,13 @@ class MainWindow(QMainWindow):
         self.ui.cb_lock_overlay_move.toggled.connect(self.save_settings)
         self.ui.funding_binance_check.toggled.connect(self.save_settings)
         self.ui.funding_bybit_check.toggled.connect(self.save_settings)
-        self.ui.funding_before_check.toggled.connect(self.save_settings)
+        self.ui.funding_enable_check.toggled.connect(self.on_funding_enable_toggled)
         self.ui.funding_minutes_edit.textChanged.connect(self.save_settings)
         self.ui.funding_threshold_pos_edit.textChanged.connect(self.save_settings)
         self.ui.funding_threshold_neg_edit.textChanged.connect(self.save_settings)
         self.ui.funding_volume_slider.valueChanged.connect(self.save_settings)
         self.ui.funding_clear_btn.clicked.connect(self.clear_funding_log)
+        self.ui.funding_refresh_btn.clicked.connect(self.refresh_funding_data)
         self.ui.funding_log_list.itemClicked.connect(self.copy_funding_symbol)
 
         # Подключаем автосохранение для галочек таймфреймов
@@ -185,23 +199,66 @@ class MainWindow(QMainWindow):
         # Запускаем таймеры часов и логики алертов
         self.logic.timer.start(1000)  # Основная логика каждую секунду
         self.logic.overlay_update_timer.start()  # Обновление часов каждые 100мс
-        self.funding_monitor.start()
+
+        # Запускаем funding monitor только если фандинг включен
+        if self.ui.funding_enable_check.isChecked():
+            self.funding_monitor.start()
+
+        # Таймер для обновления логов фандинга каждую секунду
+        self.funding_log_timer = QTimer()
+        self.funding_log_timer.timeout.connect(self._update_funding_log_realtime)
+        self.funding_log_timer.start(1000)  # Каждую секунду
+
+        # Устанавливаем eventFilter для снятия выделения
+        self.ui.funding_log_list.installEventFilter(self)
+        self.ui.funding_minutes_edit.installEventFilter(self)
+        self.ui.funding_threshold_pos_edit.installEventFilter(self)
+        self.ui.funding_threshold_neg_edit.installEventFilter(self)
 
     def _tf_registry_key(self, tf):
         # Windows registry value names are case-insensitive, so 1m and 1M collide.
         return "tf_1mo" if tf == "1M" else f"tf_{tf}"
 
+    def eventFilter(self, obj, event):
+        """Перехватываем события для снятия выделения"""
+        # ESC и Enter снимают выделение
+        if event.type() == QEvent.Type.KeyPress:
+            if (
+                event.key() == Qt.Key.Key_Escape
+                or event.key() == Qt.Key.Key_Return
+                or event.key() == Qt.Key.Key_Enter
+            ):
+                if obj == self.ui.funding_log_list:
+                    self.ui.funding_log_list.clearSelection()
+                    return True
+                elif obj in [
+                    self.ui.funding_minutes_edit,
+                    self.ui.funding_threshold_pos_edit,
+                    self.ui.funding_threshold_neg_edit,
+                ]:
+                    obj.clearFocus()
+                    obj.deselect()
+                    return True
+
+        # Клик вне элемента снимает выделение
+        if event.type() == QEvent.Type.FocusOut:
+            if obj in [
+                self.ui.funding_minutes_edit,
+                self.ui.funding_threshold_pos_edit,
+                self.ui.funding_threshold_neg_edit,
+            ]:
+                obj.deselect()
+
+        return super().eventFilter(obj, event)
+
     def reconnect_checkbox_signals(self):
         """Переподключает все чекбоксы таймфреймов к save_settings"""
         log_write("[RECONNECT] Переподключение сигналов чекбоксов...")
         for tf, cb in self.ui.checkboxes.items():
-            # Отключаем предыдущие сигналы
-            try:
-                cb.stateChanged.disconnect()
-            except:
-                pass
-            # Подключаем заново
-            cb.stateChanged.connect(self.save_settings)
+            # Подключаем только один раз на экземпляр чекбокса
+            if not getattr(cb, "_save_signal_connected", False):
+                cb.stateChanged.connect(self.save_settings)
+                cb._save_signal_connected = True
             log_write(f"[RECONNECT]   tf_{tf}: сигнал переподключен")
 
     def toggle_overlay(self, state):
@@ -737,7 +794,34 @@ class MainWindow(QMainWindow):
             self.raise_()
             self.show()
         else:
-            self.showMinimized()
+            self.request_minimize()
+
+    def refresh_funding_data(self):
+        """Принудительно обновляет данные фандинга"""
+        if hasattr(self, "funding_monitor"):
+            if hasattr(self.funding_monitor, "clear_cache"):
+                self.funding_monitor.clear_cache()
+            # Останавливаем таймер и запускаем poll немедленно
+            self.funding_monitor.timer.stop()
+            self.funding_monitor.poll()
+
+    def on_funding_enable_toggled(self, checked):
+        """Обработка вкл/выкл фандинга: затемняет/осветляет интерфейс"""
+        self.ui.funding_content_widget.setEnabled(checked)
+
+        # Изменяем прозрачность контента для визуального эффекта
+        if checked:
+            self.ui.funding_opacity_effect.setOpacity(1.0)  # Полная яркость
+            self.funding_monitor.start()
+        else:
+            self.ui.funding_opacity_effect.setOpacity(0.3)  # Затемнение
+            self.funding_monitor.stop()
+
+        self.save_settings()
+
+    def request_minimize(self):
+        """Сворачивает окно."""
+        self.showMinimized()
 
     def apply_interface_scale(self, scale_text):
         """Метод масштабирования без дрожания"""
@@ -812,9 +896,7 @@ class MainWindow(QMainWindow):
         settings.setValue(
             "funding_bybit_enabled", self.ui.funding_bybit_check.isChecked()
         )
-        settings.setValue(
-            "funding_alert_before", self.ui.funding_before_check.isChecked()
-        )
+        settings.setValue("funding_enabled", self.ui.funding_enable_check.isChecked())
         settings.setValue(
             "funding_minutes", self.ui.funding_minutes_edit.text().strip()
         )
@@ -913,10 +995,18 @@ class MainWindow(QMainWindow):
         self.ui.funding_bybit_check.setChecked(
             settings.value("funding_bybit_enabled", True, type=bool)
         )
-        self.ui.funding_before_check.setChecked(
-            settings.value("funding_alert_before", True, type=bool)
-        )
+        funding_enabled = settings.value("funding_enabled", True, type=bool)
+        self.ui.funding_enable_check.setChecked(funding_enabled)
+        self.ui.funding_content_widget.setEnabled(funding_enabled)
+
+        # Устанавливаем прозрачность в зависимости от состояния
+        if funding_enabled:
+            self.ui.funding_opacity_effect.setOpacity(1.0)
+        else:
+            self.ui.funding_opacity_effect.setOpacity(0.3)
+
         self.ui.funding_minutes_edit.setText(settings.value("funding_minutes", "15,5"))
+
         threshold_legacy = settings.value("funding_threshold", "")
         self.ui.funding_threshold_pos_edit.setText(
             settings.value("funding_threshold_pos", threshold_legacy or "0")
@@ -1040,41 +1130,97 @@ class MainWindow(QMainWindow):
             self.overlay_bg_color,
         )
 
-    def append_funding_log(self, entry):
+    def append_funding_log(self, entry, trigger_alert=False):
         if not entry:
             return
         self.funding_alert_entries.append(entry)
+        # Сортируем: сначала по минимальному времени, потом по максимальному % (по модулю)
         self.funding_alert_entries = sorted(
             self.funding_alert_entries,
-            key=lambda item: item.get("minutes_to", 999999),
+            key=lambda item: (
+                item.get("minutes_to", 999999),
+                -abs(item.get("signed_rate_pct", 0)),
+            ),
         )[:200]
         self._render_funding_log()
+
+        # Если это новая запись из лога (не алерт), проигрываем алерт
+        if trigger_alert:
+            key = self._entry_tts_key(entry)
+            self._pending_tts_entries[key] = entry
+            self._funding_tts_timer.start(250)
 
     def append_funding_log_text(self, payload):
         if not isinstance(payload, dict):
             return
-        kind = payload.get("kind", "log")
         self.funding_alert_counter += 1
-        ts = datetime.datetime.now().strftime("%H:%M:%S")
         entry = {
             "index": self.funding_alert_counter,
-            "ts": ts,
             "exchange": payload.get("exchange", ""),
             "symbol": payload.get("symbol", ""),
             "minutes_to": payload.get("minutes_to", 999999),
             "signed_rate_pct": payload.get("signed_rate_pct", 0.0),
+            "next_funding_time": payload.get("next_funding_time", 0),
+            "triggered": False,
+            "trigger_time": None,
         }
         entry["message"] = (
             f"{entry['exchange']} {entry['symbol']} — "
-            f"funding {entry['signed_rate_pct']:.3f}% — "
+            f"funding {entry['signed_rate_pct']:.2f}% — "
             f"до фандинга {entry['minutes_to']} мин"
         )
-        self.append_funding_log(entry)
+        self.append_funding_log(entry, trigger_alert=True)
 
     def clear_funding_log(self):
         self.ui.funding_log_list.clear()
         self.funding_alert_counter = 0
         self.funding_alert_entries = []
+        self.triggered_alerts = []
+        if hasattr(self, "funding_monitor") and hasattr(
+            self.funding_monitor, "clear_cache"
+        ):
+            self.funding_monitor.clear_cache()
+
+    def _update_funding_log_realtime(self):
+        """Обновляет логи в реальном времени: время, секунды, зачеркивание"""
+        import time
+
+        now_ms = int(time.time() * 1000)
+
+        # Проверяем каждый алерт
+        to_move = []
+        for entry in self.funding_alert_entries:
+            next_funding_time = entry.get("next_funding_time", 0)
+            if not next_funding_time:
+                continue
+
+            time_diff_ms = next_funding_time - now_ms
+
+            # Если время прошло и алерт еще не triggered
+            if time_diff_ms <= 0 and not entry.get("triggered", False):
+                entry["triggered"] = True
+                entry["trigger_time"] = now_ms
+
+            # Если алерт triggered и прошло 5 секунд после срабатывания
+            trigger_time = entry.get("trigger_time")
+            if entry.get("triggered", False) and trigger_time:
+                elapsed_since_trigger = now_ms - trigger_time
+                if elapsed_since_trigger >= 5000:  # 5 секунд
+                    to_move.append(entry)
+
+        # Перемещаем завершенные алерты в список triggered_alerts
+        for entry in to_move:
+            self.funding_alert_entries.remove(entry)
+            self.triggered_alerts.append(entry)
+
+        # Ограничиваем количество triggered_alerts до 10
+        if len(self.triggered_alerts) > self.max_triggered_alerts:
+            # Удаляем самые старые (первые в списке)
+            self.triggered_alerts = self.triggered_alerts[-self.max_triggered_alerts :]
+
+        # Перерисовываем лог
+        if to_move or self.funding_alert_entries:
+            self._render_funding_log()
 
     def on_funding_alert(self, payload):
         if not isinstance(payload, dict):
@@ -1091,7 +1237,7 @@ class MainWindow(QMainWindow):
         }
         entry["message"] = (
             f"{entry['exchange']} {entry['symbol']} — "
-            f"funding {entry['signed_rate_pct']:.3f}% — "
+            f"funding {entry['signed_rate_pct']:.2f}% — "
             f"до фандинга {entry['minutes_to']} мин"
         )
 
@@ -1111,7 +1257,9 @@ class MainWindow(QMainWindow):
             entry, is_multiple_exchanges
         )
 
-        self.append_funding_log(entry)
+        self.append_funding_log(
+            entry, trigger_alert=False
+        )  # Не триггерим алерт для истинных алертов
         settings = QSettings("MyTradeTools", "TF-Alerter")
         sound_enabled = settings.value("funding_sound_enabled", True, type=bool)
         tts_enabled = settings.value("funding_tts_enabled", True, type=bool)
@@ -1142,6 +1290,121 @@ class MainWindow(QMainWindow):
 
             self._speak_tts_async(message, tts_engine, tts_voice_id, sound_enabled)
 
+    def _trigger_funding_alert(self, entry):
+        """Триггерит алерт для записи в логе"""
+        time_text_ru, time_text_en = self._format_tts_time_text(entry)
+
+        # Определяем сколько бирж выбрано
+        exchanges_count = 0
+        if self.ui.funding_binance_check.isChecked():
+            exchanges_count += 1
+        if self.ui.funding_bybit_check.isChecked():
+            exchanges_count += 1
+        is_multiple_exchanges = exchanges_count > 1
+
+        # Генерируем голосовые сообщения
+        entry["voice_message_ru"] = self._format_funding_message_ru(
+            entry, is_multiple_exchanges, time_text_ru
+        )
+        entry["voice_message_en"] = self._format_funding_message_en(
+            entry, is_multiple_exchanges, time_text_en
+        )
+
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        sound_enabled = settings.value("funding_sound_enabled", True, type=bool)
+        tts_enabled = settings.value("funding_tts_enabled", True, type=bool)
+        funding_volume = int(settings.value("funding_volume", 80))
+
+        if sound_enabled:
+            try:
+                sound_file = settings.value("funding_sound_file", "")
+                if sound_file:
+                    self._play_funding_sound(sound_file, funding_volume)
+                else:
+                    self._play_funding_sound(config.SOUND_TICK_LONG, funding_volume)
+            except Exception:
+                pass
+
+        if tts_enabled:
+            tts_engine = settings.value("funding_tts_engine", "system")
+            tts_voice_id = settings.value("funding_tts_voice_id", "")
+            tts_language = settings.value("funding_tts_language", "ru")
+
+            # Выбираем сообщение на нужном языке
+            message = (
+                entry["voice_message_ru"]
+                if tts_language == "ru"
+                else entry["voice_message_en"]
+            )
+
+            # TTS должен ждать окончания звука, если звук был включен
+            self._speak_tts_async(
+                message, tts_engine, tts_voice_id, wait_for_sound=sound_enabled
+            )
+
+    def _entry_tts_key(self, entry):
+        return (
+            str(entry.get("exchange", "")),
+            str(entry.get("symbol", "")),
+            int(entry.get("next_funding_time", 0) or 0),
+            round(float(entry.get("signed_rate_pct", 0.0) or 0.0), 6),
+        )
+
+    def _flush_funding_tts_queue(self):
+        if not self._pending_tts_entries:
+            return
+
+        import time
+
+        now_ms = int(time.time() * 1000)
+
+        def sort_key(item):
+            next_time = int(item.get("next_funding_time", 0) or 0)
+            if next_time > 0:
+                seconds_to = max(0, int((next_time - now_ms) / 1000))
+            else:
+                seconds_to = 99999999
+            return (seconds_to, -abs(float(item.get("signed_rate_pct", 0.0) or 0.0)))
+
+        entries = sorted(self._pending_tts_entries.values(), key=sort_key)
+        self._pending_tts_entries = {}
+
+        for entry in entries:
+            self._trigger_funding_alert(entry)
+
+    def _ru_minutes_word(self, value):
+        n = abs(int(value))
+        if n % 10 == 1 and n % 100 != 11:
+            return "минута"
+        if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+            return "минуты"
+        return "минут"
+
+    def _ru_seconds_word(self, value):
+        n = abs(int(value))
+        if n % 10 == 1 and n % 100 != 11:
+            return "секунда"
+        if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+            return "секунды"
+        return "секунд"
+
+    def _format_tts_time_text(self, entry):
+        import time
+
+        next_time = int(entry.get("next_funding_time", 0) or 0)
+        if not next_time:
+            return "0 минут", "0 minutes"
+
+        now_ms = int(time.time() * 1000)
+        diff_ms = max(0, next_time - now_ms)
+
+        if diff_ms < 60000:
+            seconds = max(1, int(diff_ms / 1000))
+            return f"{seconds} {self._ru_seconds_word(seconds)}", f"{seconds} seconds"
+
+        minutes = max(1, int(diff_ms / 60000))
+        return f"{minutes} {self._ru_minutes_word(minutes)}", f"{minutes} minutes"
+
     def _play_funding_sound(self, filename, volume_percent):
         """Plays funding sound from transition directory with specified volume"""
         from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
@@ -1151,6 +1414,21 @@ class MainWindow(QMainWindow):
         path = config.get_sound_path("transition", filename)
         if not path or not os.path.exists(path):
             return
+
+        try:
+            duration_ms = None
+            if path.lower().endswith(".wav"):
+                import wave
+
+                with wave.open(path, "rb") as wav_file:
+                    frame_rate = wav_file.getframerate()
+                    frame_count = wav_file.getnframes()
+                    if frame_rate > 0:
+                        duration_ms = int((frame_count / frame_rate) * 1000)
+            if duration_ms and duration_ms > 0:
+                self._last_funding_sound_duration_ms = duration_ms
+        except Exception:
+            pass
 
         if not hasattr(self, "_funding_player"):
             self._funding_player = QMediaPlayer()
@@ -1169,7 +1447,9 @@ class MainWindow(QMainWindow):
         self._funding_player.setSource(QUrl.fromLocalFile(path))
         self._funding_player.play()
 
-    def _format_funding_message_ru(self, entry, is_multiple_exchanges=True):
+    def _format_funding_message_ru(
+        self, entry, is_multiple_exchanges=True, time_text_ru="0 минут"
+    ):
         """Формирует голосовое сообщение на русском"""
         # Названия бирж и монет с правильным произношением
         exchange_names = {"binance": "Бинанс", "bybit": "Байбит"}
@@ -1188,9 +1468,8 @@ class MainWindow(QMainWindow):
         }
 
         exchange = entry["exchange"].lower()
-        symbol = entry["symbol"]
+        symbol = self._symbol_for_tts(entry["symbol"])
         rate = entry["signed_rate_pct"]
-        minutes = entry["minutes_to"]
 
         # Переводим название биржи
         exchange_ru = exchange_names.get(exchange, exchange)
@@ -1211,26 +1490,27 @@ class MainWindow(QMainWindow):
             direction = "ноль"
 
         # Формируем сообщение
-        rate_str = f"{abs(rate):.3f}".replace(".", " точка ")
+        rate_str = f"{abs(rate):.2f}".replace(".", " точка ")
 
         # Включаем название биржи только если выбрано больше 1 биржи
         if is_multiple_exchanges:
-            message = f"{exchange_ru}, {coin_ru}, {direction} {rate_str} процента, через {minutes} минут"
+            message = f"{exchange_ru}, {coin_ru}, {direction} {rate_str} процента, через {time_text_ru}"
         else:
             message = (
-                f"{coin_ru}, {direction} {rate_str} процента, через {minutes} минут"
+                f"{coin_ru}, {direction} {rate_str} процента, через {time_text_ru}"
             )
 
         return message
 
-    def _format_funding_message_en(self, entry, is_multiple_exchanges=True):
+    def _format_funding_message_en(
+        self, entry, is_multiple_exchanges=True, time_text_en="0 minutes"
+    ):
         """Формирует голосовое сообщение на английском"""
         exchange_names = {"binance": "Binance", "bybit": "Bybit"}
 
         exchange = entry["exchange"].lower()
-        symbol = entry["symbol"]
+        symbol = self._symbol_for_tts(entry["symbol"])
         rate = entry["signed_rate_pct"]
-        minutes = entry["minutes_to"]
 
         # Переводим название биржи
         exchange_en = exchange_names.get(exchange, exchange)
@@ -1244,48 +1524,92 @@ class MainWindow(QMainWindow):
             direction = "zero"
 
         # Формируем сообщение
-        rate_str = f"{abs(rate):.3f}".replace(".", " point ")
+        rate_str = f"{abs(rate):.2f}".replace(".", " point ")
 
         # Включаем название биржи только если выбрано больше 1 биржи
         if is_multiple_exchanges:
-            message = f"{exchange_en}, {symbol}, {direction} {rate_str} percent, in {minutes} minutes"
+            message = f"{exchange_en}, {symbol}, {direction} {rate_str} percent, in {time_text_en}"
         else:
-            message = f"{symbol}, {direction} {rate_str} percent, in {minutes} minutes"
+            message = f"{symbol}, {direction} {rate_str} percent, in {time_text_en}"
 
         return message
+
+    def _symbol_for_tts(self, symbol):
+        if not isinstance(symbol, str):
+            return ""
+        cleaned = symbol.strip().upper()
+        for suffix in ("USDT", "USDC", "BUSD", "USD"):
+            if cleaned.endswith(suffix) and len(cleaned) > len(suffix):
+                return cleaned[: -len(suffix)]
+        return cleaned
+
+    def _start_next_edge_tts(self):
+        if self._edge_tts_busy:
+            return
+        if not self._edge_tts_queue:
+            return
+        message, voice_id, delay_ms = self._edge_tts_queue.pop(0)
+        self._edge_tts_busy = True
+        self._edge_tts_started = False
+        QTimer.singleShot(
+            max(0, int(delay_ms)),
+            lambda msg=message, vid=voice_id: self._speak_edge_tts(msg, vid),
+        )
+
+    def _on_edge_tts_playback_state(self, state):
+        from PyQt6.QtMultimedia import QMediaPlayer
+
+        if state == QMediaPlayer.PlaybackState.PlayingState:
+            self._edge_tts_started = True
+            return
+
+        if (
+            state == QMediaPlayer.PlaybackState.StoppedState
+            and self._edge_tts_busy
+            and self._edge_tts_started
+        ):
+            self._edge_tts_busy = False
+            self._edge_tts_started = False
+            QTimer.singleShot(50, self._start_next_edge_tts)
+
+    def _on_edge_tts_media_status(self, status):
+        from PyQt6.QtMultimedia import QMediaPlayer
+
+        if status == QMediaPlayer.MediaStatus.InvalidMedia and self._edge_tts_busy:
+            self._edge_tts_busy = False
+            self._edge_tts_started = False
+            QTimer.singleShot(50, self._start_next_edge_tts)
 
     def _speak_tts_async(self, message, engine_type, voice_id, wait_for_sound=False):
         """Асинхронное проигрывание TTS с поддержкой разных движков"""
         import threading
+        import time
 
-        def _run_tts(text, eng_type, tts_voice_id, delay_ms):
+        def _run_system_tts(text, tts_voice_id, delay_ms):
             if delay_ms > 0:
-                import time
-
                 time.sleep(delay_ms / 1000.0)
-
             try:
-                if eng_type == "edge":
-                    self._speak_edge_tts(text, tts_voice_id)
-                else:  # system (pyttsx3)
-                    self._speak_system_tts(text, tts_voice_id)
+                self._speak_system_tts(text, tts_voice_id)
             except Exception as e:
                 print(f"⚠️ Ошибка TTS: {e}")
 
         delay_ms = 0
-        if wait_for_sound and hasattr(self, "_funding_player"):
-            try:
-                duration_ms = self._funding_player.duration()
-                if duration_ms > 0:
-                    delay_ms = duration_ms
-                else:
-                    delay_ms = 1000
-            except Exception:
-                delay_ms = 1000
+        if wait_for_sound:
+            sound_duration = int(
+                getattr(self, "_last_funding_sound_duration_ms", 1700) or 1700
+            )
+            delay_ms = max(300, sound_duration + 80)
+
+        if engine_type == "edge":
+            if self._edge_tts_busy or self._edge_tts_queue:
+                delay_ms = 0
+            self._edge_tts_queue.append((message, voice_id, delay_ms))
+            self._start_next_edge_tts()
+            return
 
         thread = threading.Thread(
-            target=_run_tts,
-            args=(message, engine_type, voice_id, delay_ms),
+            target=_run_system_tts,
+            args=(message, voice_id, delay_ms),
             daemon=True,
         )
         thread.start()
@@ -1310,7 +1634,7 @@ class MainWindow(QMainWindow):
             import edge_tts
             import asyncio
             import tempfile
-            from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+            from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
             from PyQt6.QtCore import QUrl
 
             # Проверяем и устанавливаем voice_name с fallback
@@ -1335,16 +1659,28 @@ class MainWindow(QMainWindow):
                 self._edge_player = QMediaPlayer()
                 self._edge_output = QAudioOutput()
                 self._edge_player.setAudioOutput(self._edge_output)
+                self._edge_player.playbackStateChanged.connect(
+                    self._on_edge_tts_playback_state
+                )
+                self._edge_player.mediaStatusChanged.connect(
+                    self._on_edge_tts_media_status
+                )
+                try:
+                    default_device = QMediaDevices.defaultAudioOutput()
+                    self._edge_output.setDevice(default_device)
+                except Exception:
+                    pass
 
             # Получаем громкость из настроек
             settings = QSettings("MyTradeTools", "TF-Alerter")
             volume = settings.value("funding_volume", 80, type=int) / 100.0
             self._edge_output.setVolume(volume)
 
+            # Останавливаем предыдущее воспроизведение
+            self._edge_player.stop()
+            self._edge_player.setSource(QUrl())
             self._edge_player.setSource(QUrl.fromLocalFile(tmp_path))
             self._edge_player.play()
-
-            # Временные файлы будут автоматически удалены системой из папки Temp
 
         except ImportError:
             print("⚠️ Edge TTS не установлен. Установите: pip install edge-tts")
@@ -1352,35 +1688,97 @@ class MainWindow(QMainWindow):
             print(f"⚠️ Ошибка Edge TTS: {e}")
 
     def _render_funding_log(self):
+        import time
+
         self.ui.funding_log_list.clear()
+        now_ms = int(time.time() * 1000)
+
+        # Сначала отображаем активные алерты
         for entry in self.funding_alert_entries:
-            text = f"{entry['index']}. [{entry['ts']}] {entry['message']}"
-            item = QListWidgetItem(text)
-            item.setTextAlignment(Qt.AlignmentFlag.AlignLeft)
-            item.setData(Qt.ItemDataRole.UserRole, entry)
-            font = item.font()
-            font.setPointSize(9)
+            self._add_funding_log_item(entry, now_ms, triggered=False)
+
+        # Затем отображаем triggered алерты (зачеркнутые, внизу)
+        for entry in self.triggered_alerts:
+            self._add_funding_log_item(entry, now_ms, triggered=True)
+
+    def _add_funding_log_item(self, entry, now_ms, triggered=False):
+        """Добавляет элемент в лог фандинга"""
+        exchange = entry.get("exchange", "")
+        symbol = entry.get("symbol", "")
+        rate = entry.get("signed_rate_pct", 0.0)
+        next_funding_time = entry.get("next_funding_time", 0)
+
+        # Вычисляем время до фандинга
+        if next_funding_time:
+            time_diff_ms = next_funding_time - now_ms
+            if time_diff_ms > 60000:  # > 1 минуты
+                minutes = max(0, int(time_diff_ms / 60000))
+                time_str = f"{minutes} мин"
+            elif time_diff_ms > 0:  # < 1 минуты, показываем секунды
+                seconds = max(0, int(time_diff_ms / 1000))
+                time_str = f"{seconds} сек"
+            else:
+                time_str = "завершён"
+
+            # Конвертируем next_funding_time в локальное время
+            funding_dt = datetime.datetime.fromtimestamp(next_funding_time / 1000)
+            funding_time_str = funding_dt.strftime("%H:%M:%S")
+        else:
+            time_str = "?"
+            funding_time_str = "?"
+
+        # Текст: СИМВОЛ биржа — funding X% — до фандинга Y мин/сек — фандинг в HH:MM:SS
+        text = f"{symbol}  {exchange} — funding {rate:.2f}% — до фандинга {time_str} — фандинг в {funding_time_str}"
+
+        item = QListWidgetItem(text)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignLeft)
+        item.setData(Qt.ItemDataRole.UserRole, entry)
+
+        font = item.font()
+        font.setPointSize(9)
+
+        # Если алерт сработал - зачеркиваем и делаем темнее
+        if triggered:
+            font.setStrikeOut(True)
             item.setFont(font)
-            minutes_to = entry.get("minutes_to", 999999)
-            if minutes_to <= 5:
-                item.setForeground(QColor(config.COLORS["danger"]))
-            elif minutes_to <= 15:
-                item.setForeground(QColor(config.COLORS["accent"]))
+            item.setForeground(QColor(100, 100, 100))  # Темно-серый
+        else:
+            item.setFont(font)
+            # Цвет по времени
+            if next_funding_time:
+                time_diff_ms = next_funding_time - now_ms
+                minutes_to = max(0, int(time_diff_ms / 60000))
+                if minutes_to <= 5 or (time_diff_ms > 0 and time_diff_ms <= 60000):
+                    item.setForeground(QColor(config.COLORS["danger"]))
+                elif minutes_to <= 15:
+                    item.setForeground(QColor(config.COLORS["accent"]))
+                else:
+                    item.setForeground(QColor(config.COLORS["text"]))
             else:
                 item.setForeground(QColor(config.COLORS["text"]))
-            self.ui.funding_log_list.addItem(item)
+
+        self.ui.funding_log_list.addItem(item)
 
     def copy_funding_symbol(self, item):
         if not item:
             return
+
+        # Получаем позицию клика относительно элемента
+        cursor_pos = self.ui.funding_log_list.mapFromGlobal(QCursor.pos())
+        item_rect = self.ui.funding_log_list.visualItemRect(item)
+
         entry = item.data(Qt.ItemDataRole.UserRole) or {}
         symbol = entry.get("symbol", "")
         if not symbol:
             return
-        clipboard = QGuiApplication.clipboard()
-        clipboard.setText(symbol)
-        QToolTip.showText(QCursor.pos(), f"Скопировано: {symbol}")
-        QTimer.singleShot(2000, QToolTip.hideText)
+
+        # Копируем только если клик в первых ~100 пикселях (примерная ширина символа)
+        relative_x = cursor_pos.x() - item_rect.x()
+        if relative_x <= 100:  # Только если клик на начале строки (на символе)
+            clipboard = QGuiApplication.clipboard()
+            clipboard.setText(symbol)
+            QToolTip.showText(QCursor.pos(), f"Скопировано: {symbol}")
+            QTimer.singleShot(2000, QToolTip.hideText)
 
     def toggle_overlay_move_lock(self, state):
         self.overlay_move_locked = bool(state)
@@ -1392,9 +1790,18 @@ class MainWindow(QMainWindow):
         self.apply_overlay_visual()
         self.save_settings()
 
+    def changeEvent(self, event):
+        """Перехватываем изменения состояния окна"""
+        super().changeEvent(event)
+
+    def hideEvent(self, event):
+        """Окно скрывается"""
+        super().hideEvent(event)
+
     def closeEvent(self, event):
         log_write("\n[CLOSE] closeEvent вызван!")
         try:
+            self._is_closing = True
             self.save_settings()
 
             # Дополнительно флешим все значения при закрытии

@@ -25,6 +25,14 @@ class FundingMonitor(QObject):
     def start(self):
         self._schedule_next(1000)
 
+    def stop(self):
+        """Останавливает мониторинг фандинга"""
+        self.timer.stop()
+
+    def clear_cache(self):
+        """Сбрасывает кэш, чтобы повторно логировать текущие записи."""
+        self._alert_cache.clear()
+
     def _schedule_next(self, ms):
         self.timer.start(max(1000, int(ms)))
 
@@ -55,7 +63,6 @@ class FundingMonitor(QObject):
             "minutes_text": minutes_text,
             "threshold_pos_text": threshold_pos_text,
             "threshold_neg_text": threshold_neg_text,
-            "alert_before": self.ui.funding_before_check.isChecked(),
         }
 
     def _poll_thread(self, settings):
@@ -108,31 +115,28 @@ class FundingMonitor(QObject):
                             }
                         )
 
-                # Алерт только при точном совпадении минут и если чекбокс включен
-                if settings["alert_before"] and minutes_list and passes_threshold:
-                    for target_min in minutes_list:
-                        if minutes_to == target_min:
-                            alert_key = self._cache_key(
-                                "alert",
-                                item["exchange"],
-                                item["symbol"],
-                                next_time,
-                                f"{target_min}:{threshold_pos}:{threshold_neg}",
-                            )
-                            if self._add_cache(alert_key):
-                                self.alert_signal.emit(
-                                    {
-                                        "exchange": item["exchange"],
-                                        "symbol": item["symbol"],
-                                        "signed_rate_pct": signed_rate_pct,
-                                        "minutes_to": minutes_to,
-                                        "next_funding_time": next_time,
-                                        "kind": "alert",
-                                    }
+                    # Алерт только при точном совпадении минут
+                    if minutes_list:
+                        for target_min in minutes_list:
+                            if minutes_to == target_min:
+                                alert_key = self._cache_key(
+                                    "alert",
+                                    item["exchange"],
+                                    item["symbol"],
+                                    next_time,
+                                    f"{target_min}:{threshold_pos}:{threshold_neg}",
                                 )
-
-            interval_ms = 300000
-            if min_minutes is not None and min_minutes <= 60:
+                                if self._add_cache(alert_key):
+                                    self.alert_signal.emit(
+                                        {
+                                            "exchange": item["exchange"],
+                                            "symbol": item["symbol"],
+                                            "signed_rate_pct": signed_rate_pct,
+                                            "minutes_to": minutes_to,
+                                            "next_funding_time": next_time,
+                                            "kind": "alert",
+                                        }
+                                    )
                 interval_ms = 60000
             self.schedule_signal.emit(interval_ms)
         except Exception as exc:

@@ -14,8 +14,10 @@ from PyQt6.QtWidgets import (
     QStyledItemDelegate,
     QFontComboBox,
     QTabWidget,
+    QTabBar,
+    QGraphicsOpacityEffect,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSettings, QRect
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSettings, QRect, QSize
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
 import config
 
@@ -96,6 +98,15 @@ class CenteredComboBox(QComboBox):
             self._ignore_next_hide = False
             return  # Ignore this immediate hide call
         super().hidePopup()
+
+
+class ExpandingTabBar(QTabBar):
+    """QTabBar, который растягивает вкладки на всю ширину поровну"""
+
+    def sizeHint(self):
+        """Растягиваем tab bar на полную ширину"""
+        hint = super().sizeHint()
+        return hint
 
     def mouseReleaseEvent(self, event):
         # Make sure selection works properly
@@ -186,7 +197,7 @@ class CustomTitleBar(QWidget):
             "QPushButton { background: transparent; color: #888; border: none; font-family: 'Segoe MDL2 Assets'; font-size: 12px; padding-left: 4px; }"
             "QPushButton:hover { background: #333; color: white; }"
         )
-        minimize_btn.clicked.connect(self.parent.showMinimized)
+        minimize_btn.clicked.connect(self.parent.request_minimize)
 
         minimize_wrap = QWidget()
         minimize_wrap.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -275,6 +286,7 @@ class UI_Widget(QWidget):
                 "funding_sound_pick": "Выбрать звук",
                 "funding_log": "Лог алертов:",
                 "funding_clear": "Очистить лог",
+                "funding_refresh": "Обновить",
                 "vol": "ГРОМКОСТЬ",
                 "font": "РАЗМЕР ЧАСОВ",
                 "scale": "МАСШТАБ ИНТЕРФЕЙСА",
@@ -348,16 +360,21 @@ class UI_Widget(QWidget):
         self.root_layout.setSpacing(0)
 
         self.tabs = QTabWidget()
+        self.tabs.setTabPosition(QTabWidget.TabPosition.North)
         self.tabs.setStyleSheet(
-            f"QTabWidget::pane {{ border: none; }} "
-            f"QTabBar::tab {{ background: {config.COLORS['panel']}; color: {config.COLORS['text']}; padding: 6px 10px; border: 1px solid {config.COLORS['border']}; border-bottom: none; }} "
-            f"QTabBar::tab:selected {{ background: {config.COLORS['background']}; color: {config.COLORS['text']}; }}"
+            f"QTabWidget::pane {{ border: none; margin: 0px; }} "
+            f"QTabWidget::tab-bar {{ left: 8px; }} "
+            f"QTabBar {{ background: {config.COLORS['background']}; margin: 0px; }} "
+            f"QTabBar::tab {{ background: {config.COLORS['panel']}; color: {config.COLORS['text']}; padding: 6px 10px; margin: 0px; border: 1px solid {config.COLORS['border']}; border-bottom: none; min-width: 0px; }} "
+            f"QTabBar::tab:first {{ margin-left: 8px; }} "
+            f"QTabBar::tab:last {{ margin-right: 0px; }} "
+            f"QTabBar::tab:selected {{ background: #1e90ff; color: black; border: 2px solid #1e90ff; border-bottom: none; font-weight: bold; }} "
         )
         self.root_layout.addWidget(self.tabs)
 
         self.main_tab = QWidget()
         self.main_layout = QVBoxLayout(self.main_tab)
-        self.main_layout.setContentsMargins(20, 10, 20, 20)
+        self.main_layout.setContentsMargins(15, 10, 15, 20)
         self.main_layout.setSpacing(10)
         self.selected_clock_font = "Arial"
 
@@ -503,7 +520,7 @@ class UI_Widget(QWidget):
 
         self.funding_tab = QWidget()
         funding_layout = QVBoxLayout(self.funding_tab)
-        funding_layout.setContentsMargins(20, 10, 20, 20)
+        funding_layout.setContentsMargins(15, 10, 15, 20)
         funding_layout.setSpacing(10)
 
         funding_title = QLabel(self.trans["ru"]["funding_title"])
@@ -513,11 +530,34 @@ class UI_Widget(QWidget):
         funding_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         funding_layout.addWidget(funding_title)
 
+        # Кнопка включения/выключения фандинга
+        enable_row = QHBoxLayout()
+        self.funding_enable_check = TFCheckBox(
+            "Включить алерты фандинга", "funding_enable"
+        )
+        self.funding_enable_check.setStyleSheet(self._tf_check_style())
+        self.funding_enable_check.setChecked(True)
+        enable_row.addWidget(self.funding_enable_check)
+        enable_row.addStretch()
+        funding_layout.addLayout(enable_row)
+
+        # Контейнер для остального контента фандинга
+        self.funding_content_widget = QWidget()
+
+        # Создаем эффект затемнения для отключенного состояния
+        self.funding_opacity_effect = QGraphicsOpacityEffect()
+        self.funding_opacity_effect.setOpacity(1.0)
+        self.funding_content_widget.setGraphicsEffect(self.funding_opacity_effect)
+
+        funding_content_layout = QVBoxLayout(self.funding_content_widget)
+        funding_content_layout.setContentsMargins(0, 5, 0, 0)
+        funding_content_layout.setSpacing(10)
+
         self.funding_exchanges_label = QLabel(self.trans["ru"]["funding_exchanges"])
         self.funding_exchanges_label.setStyleSheet(
             "color:#888; font-weight:bold; font-size: 10px;"
         )
-        funding_layout.addWidget(self.funding_exchanges_label)
+        funding_content_layout.addWidget(self.funding_exchanges_label)
 
         exchanges_row = QHBoxLayout()
         self.funding_binance_check = TFCheckBox(
@@ -531,16 +571,7 @@ class UI_Widget(QWidget):
         exchanges_row.addWidget(self.funding_binance_check)
         exchanges_row.addWidget(self.funding_bybit_check)
         exchanges_row.addStretch()
-        funding_layout.addLayout(exchanges_row)
-
-        alerts_row = QHBoxLayout()
-        self.funding_before_check = TFCheckBox(
-            self.trans["ru"]["funding_before"], "funding_before"
-        )
-        self.funding_before_check.setStyleSheet(self._tf_check_style())
-        alerts_row.addWidget(self.funding_before_check)
-        alerts_row.addStretch()
-        funding_layout.addLayout(alerts_row)
+        funding_content_layout.addLayout(exchanges_row)
 
         minutes_row = QHBoxLayout()
         self.funding_minutes_label = QLabel(self.trans["ru"]["funding_minutes"])
@@ -552,7 +583,7 @@ class UI_Widget(QWidget):
         self.funding_minutes_edit.setStyleSheet(self._input_style())
         minutes_row.addWidget(self.funding_minutes_label)
         minutes_row.addWidget(self.funding_minutes_edit)
-        funding_layout.addLayout(minutes_row)
+        funding_content_layout.addLayout(minutes_row)
 
         threshold_row = QHBoxLayout()
         self.funding_threshold_pos_label = QLabel(
@@ -578,7 +609,7 @@ class UI_Widget(QWidget):
         self.funding_threshold_neg_edit.setStyleSheet(self._input_style())
         threshold_row.addWidget(self.funding_threshold_neg_label)
         threshold_row.addWidget(self.funding_threshold_neg_edit)
-        funding_layout.addLayout(threshold_row)
+        funding_content_layout.addLayout(threshold_row)
 
         # Слайдер громкости для фандинга
         funding_vol_lay = QHBoxLayout()
@@ -593,13 +624,13 @@ class UI_Widget(QWidget):
         self.funding_volume_slider.setValue(80)
         funding_vol_lay.addWidget(self.funding_volume_label)
         funding_vol_lay.addWidget(self.funding_volume_slider)
-        funding_layout.addLayout(funding_vol_lay)
+        funding_content_layout.addLayout(funding_vol_lay)
 
         self.funding_log_label = QLabel(self.trans["ru"]["funding_log"])
         self.funding_log_label.setStyleSheet(
             "color:#888; font-weight:bold; font-size: 10px;"
         )
-        funding_layout.addWidget(self.funding_log_label)
+        funding_content_layout.addWidget(self.funding_log_label)
 
         self.funding_log_list = QListWidget()
         self.funding_log_list.setStyleSheet(self._list_style())
@@ -607,16 +638,27 @@ class UI_Widget(QWidget):
         self.funding_log_list.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        funding_layout.addWidget(self.funding_log_list)
+        funding_content_layout.addWidget(self.funding_log_list)
 
-        clear_row = QHBoxLayout()
+        buttons_row = QHBoxLayout()
+        self.funding_refresh_btn = QPushButton(self.trans["ru"]["funding_refresh"])
+        self.funding_refresh_btn.setStyleSheet(self._select_app_style())
         self.funding_clear_btn = QPushButton(self.trans["ru"]["funding_clear"])
         self.funding_clear_btn.setStyleSheet(self._select_app_style())
-        clear_row.addStretch()
-        clear_row.addWidget(self.funding_clear_btn)
-        funding_layout.addLayout(clear_row)
+        buttons_row.addWidget(self.funding_refresh_btn)
+        buttons_row.addStretch()
+        buttons_row.addWidget(self.funding_clear_btn)
+        funding_content_layout.addLayout(buttons_row)
+
+        # Добавляем контейнер контента в основной layout
+        funding_layout.addWidget(self.funding_content_widget)
 
         self.tabs.addTab(self.funding_tab, self.trans["ru"]["funding_tab"])
+
+        # Растягиваем обе вкладки равномерно на всю ширину
+        tab_bar = self.tabs.tabBar()
+        tab_bar.setExpanding(True)
+        tab_bar.setUsesScrollButtons(False)
 
         # --- УПРАВЛЕНИЕ ОКНАМИ OVERLAY ---
         # Подключаем отображение кнопки выбора приложений к изменениям режима
@@ -705,12 +747,12 @@ class UI_Widget(QWidget):
         self.funding_exchanges_label.setText(t["funding_exchanges"])
         self.funding_binance_check.setText(t["funding_binance"])
         self.funding_bybit_check.setText(t["funding_bybit"])
-        self.funding_before_check.setText(t["funding_before"])
         self.funding_minutes_label.setText(t["funding_minutes"])
         self.funding_threshold_pos_label.setText(t["funding_threshold_pos"])
         self.funding_threshold_neg_label.setText(t["funding_threshold_neg"])
         self.funding_volume_label.setText(t["vol"])
         self.funding_log_label.setText(t["funding_log"])
+        self.funding_refresh_btn.setText(t["funding_refresh"])
         self.funding_clear_btn.setText(t["funding_clear"])
 
         # Обновляем элементы режима
