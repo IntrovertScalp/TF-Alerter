@@ -113,6 +113,7 @@ class MainWindow(QMainWindow):
         self.funding_alert_entries = []
         self.triggered_alerts = []  # Список завершённых алертов
         self.max_triggered_alerts = 10  # Максимум зачеркнутых алертов
+        self._funding_log_view_mode = "upcoming"
         self._edge_tts_queue = []
         self._edge_tts_busy = False
         self._edge_tts_started = False
@@ -186,8 +187,11 @@ class MainWindow(QMainWindow):
         self.ui.lang_sel.currentTextChanged.connect(self.save_settings)
         self.ui.cb_overlay.toggled.connect(self.save_settings)
         self.ui.cb_lock_overlay_move.toggled.connect(self.save_settings)
-        self.ui.funding_binance_check.toggled.connect(self.save_settings)
-        self.ui.funding_bybit_check.toggled.connect(self.save_settings)
+        self.ui.funding_binance_check.toggled.connect(self.on_funding_exchanges_changed)
+        self.ui.funding_bybit_check.toggled.connect(self.on_funding_exchanges_changed)
+        self.ui.funding_okx_check.toggled.connect(self.on_funding_exchanges_changed)
+        self.ui.funding_gate_check.toggled.connect(self.on_funding_exchanges_changed)
+        self.ui.funding_bitget_check.toggled.connect(self.on_funding_exchanges_changed)
         self.ui.funding_enable_check.toggled.connect(self.on_funding_enable_toggled)
         self.ui.funding_minutes_edit.textChanged.connect(self.save_settings)
         self.ui.funding_threshold_pos_edit.textChanged.connect(self.save_settings)
@@ -195,6 +199,12 @@ class MainWindow(QMainWindow):
         self.ui.funding_volume_slider.valueChanged.connect(self.save_settings)
         self.ui.funding_clear_btn.clicked.connect(self.clear_funding_log)
         self.ui.funding_refresh_btn.clicked.connect(self.refresh_funding_data)
+        self.ui.funding_log_upcoming_btn.clicked.connect(
+            lambda: self.set_funding_log_view_mode("upcoming")
+        )
+        self.ui.funding_log_triggered_btn.clicked.connect(
+            lambda: self.set_funding_log_view_mode("triggered")
+        )
         self.ui.funding_log_list.itemClicked.connect(self.copy_funding_symbol)
 
         # Подключаем автосохранение для галочек таймфреймов
@@ -819,11 +829,37 @@ class MainWindow(QMainWindow):
         # Изменяем прозрачность контента для визуального эффекта
         if checked:
             self.ui.funding_opacity_effect.setOpacity(1.0)  # Полная яркость
+            if hasattr(self, "funding_monitor") and hasattr(
+                self.funding_monitor, "clear_cache"
+            ):
+                self.funding_monitor.clear_cache()
             self.funding_monitor.start()
         else:
             self.ui.funding_opacity_effect.setOpacity(0.3)  # Затемнение
             self.funding_monitor.stop()
             self._stop_funding_audio(tts_only=False)
+
+        self.save_settings()
+
+    def on_funding_exchanges_changed(self, *args):
+        if self.loading_settings:
+            return
+
+        if hasattr(self, "funding_monitor") and hasattr(
+            self.funding_monitor, "clear_cache"
+        ):
+            self.funding_monitor.clear_cache()
+
+        self.funding_alert_entries = []
+        self.triggered_alerts = []
+        self._pending_tts_entries = {}
+        self.ui.funding_log_list.clear()
+
+        if self.ui.funding_enable_check.isChecked() and hasattr(
+            self, "funding_monitor"
+        ):
+            self.funding_monitor.timer.stop()
+            self.funding_monitor.poll()
 
         self.save_settings()
 
@@ -903,6 +939,13 @@ class MainWindow(QMainWindow):
         )
         settings.setValue(
             "funding_bybit_enabled", self.ui.funding_bybit_check.isChecked()
+        )
+        settings.setValue("funding_okx_enabled", self.ui.funding_okx_check.isChecked())
+        settings.setValue(
+            "funding_gate_enabled", self.ui.funding_gate_check.isChecked()
+        )
+        settings.setValue(
+            "funding_bitget_enabled", self.ui.funding_bitget_check.isChecked()
         )
         settings.setValue("funding_enabled", self.ui.funding_enable_check.isChecked())
         settings.setValue(
@@ -1002,6 +1045,15 @@ class MainWindow(QMainWindow):
         )
         self.ui.funding_bybit_check.setChecked(
             settings.value("funding_bybit_enabled", True, type=bool)
+        )
+        self.ui.funding_okx_check.setChecked(
+            settings.value("funding_okx_enabled", True, type=bool)
+        )
+        self.ui.funding_gate_check.setChecked(
+            settings.value("funding_gate_enabled", True, type=bool)
+        )
+        self.ui.funding_bitget_check.setChecked(
+            settings.value("funding_bitget_enabled", True, type=bool)
         )
         funding_enabled = settings.value("funding_enabled", True, type=bool)
         self.ui.funding_enable_check.setChecked(funding_enabled)
@@ -1265,6 +1317,12 @@ class MainWindow(QMainWindow):
             exchanges_count += 1
         if self.ui.funding_bybit_check.isChecked():
             exchanges_count += 1
+        if self.ui.funding_okx_check.isChecked():
+            exchanges_count += 1
+        if self.ui.funding_gate_check.isChecked():
+            exchanges_count += 1
+        if self.ui.funding_bitget_check.isChecked():
+            exchanges_count += 1
         is_multiple_exchanges = exchanges_count > 1
 
         # Генерируем голосовые сообщения
@@ -1319,6 +1377,12 @@ class MainWindow(QMainWindow):
         if self.ui.funding_binance_check.isChecked():
             exchanges_count += 1
         if self.ui.funding_bybit_check.isChecked():
+            exchanges_count += 1
+        if self.ui.funding_okx_check.isChecked():
+            exchanges_count += 1
+        if self.ui.funding_gate_check.isChecked():
+            exchanges_count += 1
+        if self.ui.funding_bitget_check.isChecked():
             exchanges_count += 1
         is_multiple_exchanges = exchanges_count > 1
 
@@ -1835,13 +1899,37 @@ class MainWindow(QMainWindow):
         self.ui.funding_log_list.clear()
         now_ms = int(time.time() * 1000)
 
-        # Сначала отображаем активные алерты
+        if self._funding_log_view_mode == "triggered":
+            triggered_now = [
+                entry
+                for entry in self.funding_alert_entries
+                if entry.get("triggered", False)
+            ]
+            for entry in self.triggered_alerts:
+                self._add_funding_log_item(entry, now_ms, triggered=True)
+            for entry in triggered_now:
+                self._add_funding_log_item(entry, now_ms, triggered=True)
+            return
+
+        # По умолчанию показываем предстоящие
         for entry in self.funding_alert_entries:
+            if entry.get("triggered", False):
+                continue
             self._add_funding_log_item(entry, now_ms, triggered=False)
 
-        # Затем отображаем triggered алерты (зачеркнутые, внизу)
-        for entry in self.triggered_alerts:
-            self._add_funding_log_item(entry, now_ms, triggered=True)
+    def set_funding_log_view_mode(self, mode):
+        if mode not in ("upcoming", "triggered"):
+            mode = "upcoming"
+        self._funding_log_view_mode = mode
+
+        self.ui.funding_log_upcoming_btn.blockSignals(True)
+        self.ui.funding_log_triggered_btn.blockSignals(True)
+        self.ui.funding_log_upcoming_btn.setChecked(mode == "upcoming")
+        self.ui.funding_log_triggered_btn.setChecked(mode == "triggered")
+        self.ui.funding_log_upcoming_btn.blockSignals(False)
+        self.ui.funding_log_triggered_btn.blockSignals(False)
+
+        self._render_funding_log()
 
     def _add_funding_log_item(self, entry, now_ms, triggered=False):
         """Добавляет элемент в лог фандинга"""

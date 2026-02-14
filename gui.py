@@ -272,6 +272,9 @@ class UI_Widget(QWidget):
                 "funding_exchanges": "Биржи:",
                 "funding_binance": "Binance",
                 "funding_bybit": "Bybit",
+                "funding_okx": "OKX",
+                "funding_gate": "Gate",
+                "funding_bitget": "Bitget",
                 "funding_alerts": "Типы алертов:",
                 "funding_before": "До фандинга",
                 "funding_percent": "Funding %",
@@ -285,6 +288,8 @@ class UI_Widget(QWidget):
                 "funding_sound_file": "Звук фандинга:",
                 "funding_sound_pick": "Выбрать звук",
                 "funding_log": "Лог алертов:",
+                "funding_upcoming": "Предстоящие",
+                "funding_triggered": "Сработавшие",
                 "funding_clear": "Очистить лог",
                 "funding_refresh": "Обновить",
                 "vol": "ГРОМКОСТЬ",
@@ -317,6 +322,9 @@ class UI_Widget(QWidget):
                 "funding_exchanges": "Exchanges:",
                 "funding_binance": "Binance",
                 "funding_bybit": "Bybit",
+                "funding_okx": "OKX",
+                "funding_gate": "Gate",
+                "funding_bitget": "Bitget",
                 "funding_alerts": "Alert Types:",
                 "funding_before": "Before Funding",
                 "funding_percent": "Funding %",
@@ -330,6 +338,8 @@ class UI_Widget(QWidget):
                 "funding_sound_file": "Funding sound:",
                 "funding_sound_pick": "Pick sound",
                 "funding_log": "Alert log:",
+                "funding_upcoming": "Upcoming",
+                "funding_triggered": "Triggered",
                 "funding_clear": "Clear log",
                 "vol": "VOLUME",
                 "font": "CLOCK SIZE",
@@ -559,19 +569,36 @@ class UI_Widget(QWidget):
         )
         funding_content_layout.addWidget(self.funding_exchanges_label)
 
-        exchanges_row = QHBoxLayout()
+        exchanges_grid = QGridLayout()
+        exchanges_grid.setHorizontalSpacing(12)
+        exchanges_grid.setVerticalSpacing(6)
         self.funding_binance_check = TFCheckBox(
             self.trans["ru"]["funding_binance"], "funding_binance"
         )
         self.funding_bybit_check = TFCheckBox(
             self.trans["ru"]["funding_bybit"], "funding_bybit"
         )
+        self.funding_okx_check = TFCheckBox(
+            self.trans["ru"]["funding_okx"], "funding_okx"
+        )
+        self.funding_gate_check = TFCheckBox(
+            self.trans["ru"]["funding_gate"], "funding_gate"
+        )
+        self.funding_bitget_check = TFCheckBox(
+            self.trans["ru"]["funding_bitget"], "funding_bitget"
+        )
         self.funding_binance_check.setStyleSheet(self._tf_check_style())
         self.funding_bybit_check.setStyleSheet(self._tf_check_style())
-        exchanges_row.addWidget(self.funding_binance_check)
-        exchanges_row.addWidget(self.funding_bybit_check)
-        exchanges_row.addStretch()
-        funding_content_layout.addLayout(exchanges_row)
+        self.funding_okx_check.setStyleSheet(self._tf_check_style())
+        self.funding_gate_check.setStyleSheet(self._tf_check_style())
+        self.funding_bitget_check.setStyleSheet(self._tf_check_style())
+        exchanges_grid.addWidget(self.funding_binance_check, 0, 0)
+        exchanges_grid.addWidget(self.funding_bybit_check, 0, 1)
+        exchanges_grid.addWidget(self.funding_okx_check, 0, 2)
+        exchanges_grid.addWidget(self.funding_gate_check, 1, 0)
+        exchanges_grid.addWidget(self.funding_bitget_check, 1, 1)
+        exchanges_grid.setColumnStretch(2, 1)
+        funding_content_layout.addLayout(exchanges_grid)
 
         minutes_row = QHBoxLayout()
         self.funding_minutes_label = QLabel(self.trans["ru"]["funding_minutes"])
@@ -631,6 +658,28 @@ class UI_Widget(QWidget):
             "color:#888; font-weight:bold; font-size: 10px;"
         )
         funding_content_layout.addWidget(self.funding_log_label)
+
+        log_filters_row = QHBoxLayout()
+        log_filters_row.setSpacing(6)
+        self.funding_log_upcoming_btn = QPushButton(
+            self.trans["ru"]["funding_upcoming"]
+        )
+        self.funding_log_triggered_btn = QPushButton(
+            self.trans["ru"]["funding_triggered"]
+        )
+        for btn in (self.funding_log_upcoming_btn, self.funding_log_triggered_btn):
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(
+                f"QPushButton {{ color: #9a9a9a; border: 1px solid #3a3a3a; border-radius: 6px; background: #191919; padding: 2px 8px; font-size: 9px; font-weight: bold; }} "
+                f"QPushButton:checked {{ color: #111; border: 1px solid {config.COLORS['accent']}; background: {config.COLORS['accent']}; }} "
+                "QPushButton:hover:!checked { border: 1px solid #5a5a5a; color: #c7c7c7; }"
+            )
+        self.funding_log_upcoming_btn.setChecked(True)
+        log_filters_row.addWidget(self.funding_log_upcoming_btn)
+        log_filters_row.addWidget(self.funding_log_triggered_btn)
+        log_filters_row.addStretch()
+        funding_content_layout.addLayout(log_filters_row)
 
         self.funding_log_list = QListWidget()
         self.funding_log_list.setStyleSheet(self._list_style())
@@ -747,11 +796,16 @@ class UI_Widget(QWidget):
         self.funding_exchanges_label.setText(t["funding_exchanges"])
         self.funding_binance_check.setText(t["funding_binance"])
         self.funding_bybit_check.setText(t["funding_bybit"])
+        self.funding_okx_check.setText(t["funding_okx"])
+        self.funding_gate_check.setText(t["funding_gate"])
+        self.funding_bitget_check.setText(t["funding_bitget"])
         self.funding_minutes_label.setText(t["funding_minutes"])
         self.funding_threshold_pos_label.setText(t["funding_threshold_pos"])
         self.funding_threshold_neg_label.setText(t["funding_threshold_neg"])
         self.funding_volume_label.setText(t["vol"])
         self.funding_log_label.setText(t["funding_log"])
+        self.funding_log_upcoming_btn.setText(t["funding_upcoming"])
+        self.funding_log_triggered_btn.setText(t["funding_triggered"])
         self.funding_refresh_btn.setText(t["funding_refresh"])
         self.funding_clear_btn.setText(t["funding_clear"])
 

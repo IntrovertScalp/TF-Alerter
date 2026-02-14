@@ -2,6 +2,7 @@ import json
 import threading
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 
@@ -16,6 +17,7 @@ class FundingMonitor(QObject):
         self._inflight = False
         self._alert_cache = set()
         self._max_cache = 20000
+        self._last_exchange_signature = ()
 
         self.timer = QTimer()
         self.timer.setSingleShot(True)
@@ -40,8 +42,13 @@ class FundingMonitor(QObject):
         if self._inflight:
             self._schedule_next(60000)
             return
-        self._inflight = True
         settings = self._snapshot_settings()
+        signature = tuple(sorted(settings.get("exchanges", [])))
+        if signature != self._last_exchange_signature:
+            self.clear_cache()
+            self._last_exchange_signature = signature
+
+        self._inflight = True
         thread = threading.Thread(
             target=self._poll_thread, args=(settings,), daemon=True
         )
@@ -53,6 +60,21 @@ class FundingMonitor(QObject):
             exchanges.append("binance")
         if self.ui.funding_bybit_check.isChecked():
             exchanges.append("bybit")
+        if (
+            getattr(self.ui, "funding_okx_check", None)
+            and self.ui.funding_okx_check.isChecked()
+        ):
+            exchanges.append("okx")
+        if (
+            getattr(self.ui, "funding_gate_check", None)
+            and self.ui.funding_gate_check.isChecked()
+        ):
+            exchanges.append("gate")
+        if (
+            getattr(self.ui, "funding_bitget_check", None)
+            and self.ui.funding_bitget_check.isChecked()
+        ):
+            exchanges.append("bitget")
 
         minutes_text = self.ui.funding_minutes_edit.text().strip() or "15,5"
         threshold_pos_text = self.ui.funding_threshold_pos_edit.text().strip() or "0"
@@ -68,10 +90,17 @@ class FundingMonitor(QObject):
     def _poll_thread(self, settings):
         try:
             data = []
+            interval_ms = 60000
             if "binance" in settings["exchanges"]:
-                data.extend(self._fetch_binance())
+                data.extend(self._safe_fetch_exchange(self._fetch_binance, "Binance"))
             if "bybit" in settings["exchanges"]:
-                data.extend(self._fetch_bybit())
+                data.extend(self._safe_fetch_exchange(self._fetch_bybit, "Bybit"))
+            if "okx" in settings["exchanges"]:
+                data.extend(self._safe_fetch_exchange(self._fetch_okx, "OKX"))
+            if "gate" in settings["exchanges"]:
+                data.extend(self._safe_fetch_exchange(self._fetch_gate, "Gate"))
+            if "bitget" in settings["exchanges"]:
+                data.extend(self._safe_fetch_exchange(self._fetch_bitget, "Bitget"))
 
             now_ms = int(time.time() * 1000)
             minutes_list = self._parse_minutes(settings["minutes_text"])
@@ -137,13 +166,20 @@ class FundingMonitor(QObject):
                                             "kind": "alert",
                                         }
                                     )
-                interval_ms = 60000
             self.schedule_signal.emit(interval_ms)
         except Exception as exc:
             self.log_signal.emit(f"Funding error: {exc}")
             self.schedule_signal.emit(60000)
         finally:
             self._inflight = False
+
+    def _safe_fetch_exchange(self, fetcher, exchange_name):
+        try:
+            items = fetcher()
+            return items if isinstance(items, list) else []
+        except Exception as exc:
+            self.log_signal.emit(f"Funding fetch error ({exchange_name}): {exc}")
+            return []
 
     def _cache_key(self, kind, exchange, symbol, next_time, extra):
         return f"{kind}:{exchange}:{symbol}:{next_time}:{extra}"
@@ -238,6 +274,121 @@ class FundingMonitor(QObject):
             items.append(
                 {
                     "exchange": "Bybit",
+                    "symbol": symbol,
+                    "rate": rate,
+                    "next_funding_time": next_time,
+                }
+            )
+        return items
+
+    def _fetch_okx(self):
+        tickers_url = "https://www.okx.com/api/v5/market/tickers?instType=SWAP"
+        payload = self._fetch_json(tickers_url)
+        listing = payload.get("data", []) if isinstance(payload, dict) else []
+        if not isinstance(listing, list):
+            return []
+
+        inst_ids = []
+        for entry in listing:
+            try:
+                inst_id = str(entry.get("instId", ""))
+            except Exception:
+                continue
+            if not inst_id.endswith("-SWAP"):
+                continue
+            if "-USDT-" not in inst_id:
+                continue
+            inst_ids.append(inst_id)
+
+        items = []
+        if not inst_ids:
+            return items
+
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {
+                executor.submit(
+                    self._fetch_json,
+                    f"https://www.okx.com/api/v5/public/funding-rate?instId={inst_id}",
+                ): inst_id
+                for inst_id in inst_ids
+            }
+            for future in as_completed(futures):
+                inst_id = futures[future]
+                try:
+                    result = future.result()
+                    rows = result.get("data", []) if isinstance(result, dict) else []
+                    if not rows:
+                        continue
+                    row = rows[0]
+                    rate = float(row.get("fundingRate", 0) or 0)
+                    next_time = int(float(row.get("nextFundingTime", 0) or 0))
+                except Exception:
+                    continue
+                if not next_time:
+                    continue
+                symbol = inst_id.replace("-SWAP", "").replace("-", "")
+                items.append(
+                    {
+                        "exchange": "OKX",
+                        "symbol": symbol,
+                        "rate": rate,
+                        "next_funding_time": next_time,
+                    }
+                )
+        return items
+
+    def _fetch_gate(self):
+        url = "https://api.gateio.ws/api/v4/futures/usdt/contracts"
+        listing = self._fetch_json(url)
+        items = []
+        if not isinstance(listing, list):
+            return items
+        for entry in listing:
+            try:
+                contract = str(entry.get("name", ""))
+                rate = float(entry.get("funding_rate", 0) or 0)
+                next_time_raw = entry.get("funding_next_apply")
+                if next_time_raw is None:
+                    next_time_raw = entry.get("next_funding_time", 0)
+                next_time = int(float(next_time_raw or 0))
+            except Exception:
+                continue
+            if not contract or not next_time:
+                continue
+            if next_time < 10**12:
+                next_time *= 1000
+            symbol = contract.replace("_", "")
+            items.append(
+                {
+                    "exchange": "Gate",
+                    "symbol": symbol,
+                    "rate": rate,
+                    "next_funding_time": next_time,
+                }
+            )
+        return items
+
+    def _fetch_bitget(self):
+        url = "https://api.bitget.com/api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES"
+        payload = self._fetch_json(url)
+        listing = payload.get("data", []) if isinstance(payload, dict) else []
+        items = []
+        if not isinstance(listing, list):
+            return items
+        for entry in listing:
+            try:
+                symbol = str(entry.get("symbol", ""))
+                rate = float(entry.get("fundingRate", 0) or 0)
+                next_time = int(float(entry.get("nextUpdate", 0) or 0))
+            except Exception:
+                continue
+            if not symbol or not next_time:
+                continue
+            if next_time < 10**12:
+                next_time *= 1000
+            items.append(
+                {
+                    "exchange": "Bitget",
                     "symbol": symbol,
                     "rate": rate,
                     "next_funding_time": next_time,
