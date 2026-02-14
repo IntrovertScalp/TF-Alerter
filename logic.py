@@ -112,7 +112,22 @@ class AlerterLogic(QObject):
         accent_color = config.COLORS.get("accent", "#ffffff")
         accent_alpha = config.COLORS.get("accent_alpha", 255)
         new_size = self.ui.ov_size_slider.value()
-        self.overlay.update_style(accent_color, new_size, accent_alpha)
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        font_family = settings.value("overlay_font_family", "Arial")
+        if not isinstance(font_family, str) or not font_family.strip():
+            font_family = "Arial"
+        bg_enabled = settings.value("overlay_bg_enabled", False, type=bool)
+        bg_color = settings.value("overlay_bg_color", "#000000")
+        if not isinstance(bg_color, str) or not bg_color.strip():
+            bg_color = "#000000"
+        self.overlay.update_style(
+            accent_color,
+            new_size,
+            accent_alpha,
+            font_family,
+            bg_enabled,
+            bg_color,
+        )
 
     def update_overlay_time(self):
         """Обновляет время в overlay каждые 100мс (оптимизировано)"""

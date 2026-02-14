@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QCheckBox,
 )
-from PyQt6.QtGui import QColor, QIcon
+from PyQt6.QtGui import QColor, QIcon, QFont
 from PyQt6.QtCore import Qt, QSettings
 import config
 import gui
@@ -92,13 +92,21 @@ class MainWindow(QMainWindow):
 
         # Флаг для блокировки автосохранения во время загрузки
         self.loading_settings = True
+        self.current_overlay_font = "Arial"
+        self.overlay_bg_enabled = False
+        self.overlay_bg_color = "#000000"
+        self.overlay_move_locked = False
 
         # --- ПОДКЛЮЧЕНИЕ СИГНАЛОВ ---
         self.ui.color_btn.clicked.connect(self.change_color)
+        self.ui.clock_font_combo.currentTextChanged.connect(
+            self.on_overlay_font_changed
+        )
         self.ui.lang_sel.currentTextChanged.connect(self.ui.change_language)
 
         # Подключаем переключатель отображения часов
         self.ui.cb_overlay.toggled.connect(self.toggle_overlay)
+        self.ui.cb_lock_overlay_move.toggled.connect(self.toggle_overlay_move_lock)
 
         # --- ПОДКЛЮЧЕНИЕ СИГНАЛОВ ДЛЯ УПРАВЛЕНИЯ OVERLAY ОКНАМИ ---
         self.ui.overlay_mode_combo.currentIndexChanged.connect(self.update_overlay_mode)
@@ -146,6 +154,7 @@ class MainWindow(QMainWindow):
         self.ui.ov_size_slider.valueChanged.connect(self.save_settings)
         self.ui.lang_sel.currentTextChanged.connect(self.save_settings)
         self.ui.cb_overlay.toggled.connect(self.save_settings)
+        self.ui.cb_lock_overlay_move.toggled.connect(self.save_settings)
 
         # Подключаем автосохранение для галочек таймфреймов
         self.reconnect_checkbox_signals()
@@ -729,6 +738,7 @@ class MainWindow(QMainWindow):
 
             # 3. Принудительно увеличиваем кнопки (чтобы текст не заходил под них)
             self.ui.color_btn.setFixedSize(int(125 * factor), int(38 * factor))
+            self.ui.clock_font_combo.setMinimumWidth(int(170 * factor))
             self.ui.lang_sel.setFixedSize(int(65 * factor), int(28 * factor))
 
             # 4. Стили контейнера
@@ -766,6 +776,15 @@ class MainWindow(QMainWindow):
         settings.setValue("window_pos", self.pos())
         settings.setValue("accent_color", config.COLORS["accent"])
         settings.setValue("accent_alpha", config.COLORS.get("accent_alpha", 255))
+        settings.setValue(
+            "overlay_font_family",
+            (self.current_overlay_font or "").strip() or "Arial",
+        )
+        settings.setValue("overlay_bg_enabled", bool(self.overlay_bg_enabled))
+        settings.setValue("overlay_bg_color", self.overlay_bg_color or "#000000")
+        settings.setValue(
+            "overlay_move_locked", self.ui.cb_lock_overlay_move.isChecked()
+        )
 
         # Сохраняем режим и список приложений для overlay
         settings.setValue("overlay_show_mode", config.OVERLAY_SHOW_MODE)
@@ -828,9 +847,34 @@ class MainWindow(QMainWindow):
 
         saved_color = settings.value("accent_color", config.COLORS["accent"])
         saved_alpha = int(settings.value("accent_alpha", 255))
+        saved_font = settings.value("overlay_font_family", "Arial")
+        if not isinstance(saved_font, str) or not saved_font.strip():
+            saved_font = "Arial"
+        self.current_overlay_font = saved_font
+        self.ui.clock_font_combo.setCurrentFont(QFont(saved_font))
+
+        self.overlay_bg_enabled = settings.value("overlay_bg_enabled", False, type=bool)
+        saved_bg_color = settings.value("overlay_bg_color", "#000000")
+        if not isinstance(saved_bg_color, str) or not saved_bg_color.strip():
+            saved_bg_color = "#000000"
+        self.overlay_bg_color = saved_bg_color
+
+        self.overlay_move_locked = settings.value(
+            "overlay_move_locked", False, type=bool
+        )
+        self.ui.cb_lock_overlay_move.setChecked(self.overlay_move_locked)
+        self.logic.overlay.move_locked = self.overlay_move_locked
+
         config.COLORS["accent"] = saved_color
         config.COLORS["accent_alpha"] = saved_alpha
-        self.logic.overlay.update_style(saved_color, size, saved_alpha)
+        self.logic.overlay.update_style(
+            saved_color,
+            size,
+            saved_alpha,
+            saved_font,
+            self.overlay_bg_enabled,
+            self.overlay_bg_color,
+        )
 
         pos = settings.value("overlay_pos")
         if pos:
@@ -920,6 +964,30 @@ class MainWindow(QMainWindow):
                     f"[LOAD]   {self._tf_registry_key(tf)}: val={val} -> is_checked={is_checked}"
                 )
 
+    def apply_overlay_visual(self):
+        """Применяет текущий стиль overlay (цвет, размер, шрифт, фон)"""
+        overlay_size = self.ui.ov_size_slider.value()
+        accent_color = config.COLORS.get("accent", "#ffffff")
+        accent_alpha = int(config.COLORS.get("accent_alpha", 255))
+        self.logic.overlay.update_style(
+            accent_color,
+            overlay_size,
+            accent_alpha,
+            self.current_overlay_font,
+            self.overlay_bg_enabled,
+            self.overlay_bg_color,
+        )
+
+    def toggle_overlay_move_lock(self, state):
+        self.overlay_move_locked = bool(state)
+        self.logic.overlay.move_locked = self.overlay_move_locked
+
+    def on_overlay_font_changed(self, font_name):
+        selected_family = (font_name or "").strip() or "Arial"
+        self.current_overlay_font = selected_family
+        self.apply_overlay_visual()
+        self.save_settings()
+
     def closeEvent(self, event):
         log_write("\n[CLOSE] closeEvent вызван!")
         try:
@@ -949,12 +1017,20 @@ class MainWindow(QMainWindow):
         settings = QSettings("MyTradeTools", "TF-Alerter")
         current_alpha = int(settings.value("accent_alpha", 255))
 
-        dialog = ColorPickerDialog(self, current_hex, current_alpha)
+        dialog = ColorPickerDialog(
+            self,
+            current_hex,
+            current_alpha,
+            self.overlay_bg_enabled,
+            self.overlay_bg_color,
+        )
         # При открытии диалога сразу применяются все изменения благодаря live preview
         if dialog.exec():
             # Пользователь нажал OK - сохраняем значения в конфиг и настройки
             new_hex = dialog.get_color()
             new_alpha = dialog.get_alpha()
+            self.overlay_bg_enabled = dialog.get_bg_enabled()
+            self.overlay_bg_color = dialog.get_bg_color()
             config.COLORS["accent"] = new_hex
             config.COLORS["accent_alpha"] = new_alpha
             self.save_settings()

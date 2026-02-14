@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QStyledItemDelegate,
+    QFontComboBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSettings, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
@@ -257,7 +258,9 @@ class UI_Widget(QWidget):
                 "font": "РАЗМЕР ЧАСОВ",
                 "scale": "МАСШТАБ ИНТЕРФЕЙСА",
                 "show": "ОТОБРАЖАТЬ ЧАСЫ (OVERLAY)",
+                "lock_move": "Блокировать перемещение часов",
                 "btn": "ЦВЕТ ЧАСОВ",
+                "font_btn": "Шрифт",
                 "mode": "Режим:",
                 "select_app": "Выбрать приложения",
                 "always_show": "Всегда показывать",
@@ -279,7 +282,9 @@ class UI_Widget(QWidget):
                 "font": "CLOCK SIZE",
                 "scale": "INTERFACE SCALE",
                 "show": "DISPLAY CLOCK (OVERLAY)",
+                "lock_move": "Lock Clock Movement",
                 "btn": "CLOCK COLOR",
+                "font_btn": "Font",
                 "mode": "Mode:",
                 "select_app": "Select Applications",
                 "always_show": "Always Show",
@@ -300,6 +305,7 @@ class UI_Widget(QWidget):
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(20, 10, 20, 20)
         self.main_layout.setSpacing(10)
+        self.selected_clock_font = "Arial"
 
         # Язык (скрытый, управляется через настройки)
         self.lang_sel = QComboBox()
@@ -344,6 +350,12 @@ class UI_Widget(QWidget):
         self.cb_overlay = TFCheckBox(self.trans["ru"]["show"], "overlay")
         self.cb_overlay.setStyleSheet(self._tf_check_style())
         overlay_lay.addWidget(self.cb_overlay)
+
+        self.cb_lock_overlay_move = TFCheckBox(
+            self.trans["ru"]["lock_move"], "lock_move"
+        )
+        self.cb_lock_overlay_move.setStyleSheet(self._tf_check_style())
+        overlay_lay.addWidget(self.cb_lock_overlay_move)
 
         # 2) Режим (ниже чекбокса)
         mode_layout = QHBoxLayout()
@@ -413,6 +425,20 @@ class UI_Widget(QWidget):
         self._sync_color_btn_size()
         QTimer.singleShot(0, self._sync_color_btn_size)
         color_layout.addWidget(self.color_btn)
+        color_layout.addSpacing(10)
+
+        self.clock_font_label = QLabel(self.trans["ru"]["font_btn"])
+        self.clock_font_label.setStyleSheet(
+            "color:#888; font-weight:bold; font-size: 10px; border: none; background: transparent;"
+        )
+        color_layout.addWidget(self.clock_font_label)
+
+        self.clock_font_combo = QFontComboBox()
+        self.clock_font_combo.setStyleSheet(self._combo_style())
+        self.clock_font_combo.setMinimumWidth(170)
+        self.clock_font_combo.setToolTip("Выбор шрифта часов")
+        color_layout.addWidget(self.clock_font_combo)
+
         color_layout.setAlignment(self.color_btn, Qt.AlignmentFlag.AlignLeft)
         color_layout.addStretch()
         overlay_lay.addLayout(color_layout)
@@ -496,7 +522,9 @@ class UI_Widget(QWidget):
 
         # Обновляем чекбокс и кнопку
         self.cb_overlay.setText(t["show"])
+        self.cb_lock_overlay_move.setText(t["lock_move"])
         self.color_btn.setText(t["btn"])
+        self.clock_font_label.setText(t["font_btn"])
         self._sync_color_btn_size()
 
         # Обновляем элементы режима

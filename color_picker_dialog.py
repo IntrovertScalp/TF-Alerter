@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QSlider,
     QFrame,
     QColorDialog,
+    QCheckBox,
 )
 from PyQt6.QtGui import QColor
 from PyQt6.QtCore import Qt, QSettings
@@ -14,7 +15,14 @@ import config
 
 
 class ColorPickerDialog(QDialog):
-    def __init__(self, parent=None, current_color=None, current_alpha=255):
+    def __init__(
+        self,
+        parent=None,
+        current_color=None,
+        current_alpha=255,
+        bg_enabled=False,
+        bg_color="#000000",
+    ):
         super().__init__(parent)
         self.parent = parent
         # Use provided color or fallback to configured accent
@@ -25,6 +33,10 @@ class ColorPickerDialog(QDialog):
         # Сохраняем исходные значения для восстановления при отмене
         self.original_color = current_color or config.COLORS.get("accent", "#1e90ff")
         self.original_alpha = current_alpha
+        self.bg_enabled = bool(bg_enabled)
+        self.bg_color = QColor(bg_color if bg_color else "#000000")
+        self.original_bg_enabled = bool(bg_enabled)
+        self.original_bg_color = self.bg_color.name()
 
         # Словари переводов
         self.translations = {
@@ -32,6 +44,8 @@ class ColorPickerDialog(QDialog):
                 "title": "Выбор цвета",
                 "color": "Цвет:",
                 "opacity": "Прозрачность:",
+                "bg_enabled": "Фон под часами",
+                "bg_color": "Цвет фона:",
                 "pick_color": "Выбрать цвет",
                 "cancel": "Отмена",
                 "ok": "OK",
@@ -40,6 +54,8 @@ class ColorPickerDialog(QDialog):
                 "title": "Color Picker",
                 "color": "Color:",
                 "opacity": "Opacity:",
+                "bg_enabled": "Background under clock",
+                "bg_color": "Background color:",
                 "pick_color": "Pick Color",
                 "cancel": "Cancel",
                 "ok": "OK",
@@ -51,7 +67,7 @@ class ColorPickerDialog(QDialog):
         self.current_lang = settings.value("language", "RU")
 
         self.setWindowTitle(self.translations[self.current_lang]["title"])
-        self.setFixedSize(400, 250)
+        self.setFixedSize(400, 320)
 
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -67,7 +83,7 @@ class ColorPickerDialog(QDialog):
             }}
         """
         )
-        main_container.setGeometry(0, 0, 400, 250)
+        main_container.setGeometry(0, 0, 400, 320)
 
         layout = QVBoxLayout(main_container)
         layout.setContentsMargins(20, 15, 20, 15)
@@ -129,6 +145,36 @@ class ColorPickerDialog(QDialog):
         opacity_layout.addWidget(self.opacity_slider)
         opacity_layout.addWidget(self.opacity_value)
         layout.addLayout(opacity_layout)
+
+        # Фон под часами: вкл/выкл
+        bg_enable_layout = QHBoxLayout()
+        self.bg_enabled_check = QCheckBox(
+            self.translations[self.current_lang]["bg_enabled"]
+        )
+        self.bg_enabled_check.setChecked(self.bg_enabled)
+        self.bg_enabled_check.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: 12px; border: none; background: transparent;"
+        )
+        self.bg_enabled_check.stateChanged.connect(self.on_bg_enabled_changed)
+        bg_enable_layout.addWidget(self.bg_enabled_check)
+        bg_enable_layout.addStretch()
+        layout.addLayout(bg_enable_layout)
+
+        # Цвет фона
+        bg_color_layout = QHBoxLayout()
+        bg_color_label = QLabel(self.translations[self.current_lang]["bg_color"])
+        bg_color_label.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: 12px; border: none; background: transparent;"
+        )
+        self.bg_color_btn = QPushButton()
+        self.bg_color_btn.setFixedSize(50, 40)
+        self.update_bg_color_button()
+        self.bg_color_btn.setEnabled(self.bg_enabled)
+        self.bg_color_btn.clicked.connect(self.pick_bg_color)
+        bg_color_layout.addWidget(bg_color_label)
+        bg_color_layout.addStretch()
+        bg_color_layout.addWidget(self.bg_color_btn)
+        layout.addLayout(bg_color_layout)
 
         layout.addSpacing(10)
 
@@ -210,6 +256,37 @@ class ColorPickerDialog(QDialog):
         """
         )
 
+    def update_bg_color_button(self):
+        self.bg_color_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {self.bg_color.name()};
+                border: 2px solid {config.COLORS['border']};
+                border-radius: 5px;
+            }}
+            QPushButton:hover {{
+                border: 2px solid {config.COLORS['accent']};
+            }}
+        """
+        )
+
+    def pick_bg_color(self):
+        color = QColorDialog.getColor(
+            self.bg_color, self, self.translations[self.current_lang]["bg_color"]
+        )
+        if color.isValid():
+            self.bg_color = color
+            self.update_bg_color_button()
+            self.preview_changes()
+
+    def on_bg_enabled_changed(self, state):
+        if isinstance(state, Qt.CheckState):
+            self.bg_enabled = state == Qt.CheckState.Checked
+        else:
+            self.bg_enabled = int(state) == Qt.CheckState.Checked.value
+        self.bg_color_btn.setEnabled(self.bg_enabled)
+        self.preview_changes()
+
     def pick_color(self):
         """Открывает стандартный диалог выбора цвета с live preview"""
         # Используем non-modal диалог для live preview
@@ -260,9 +337,19 @@ class ColorPickerDialog(QDialog):
                     if hasattr(self.parent, "ui")
                     else 40
                 )
+                selected_font = "Arial"
+                if hasattr(self.parent, "current_overlay_font"):
+                    selected_font = (
+                        self.parent.current_overlay_font or ""
+                    ).strip() or "Arial"
                 # Обновляем стиль часов с новыми цветом и прозрачностью
                 self.parent.logic.overlay.update_style(
-                    self.selected_color.name(), overlay_size, self.selected_alpha
+                    self.selected_color.name(),
+                    overlay_size,
+                    self.selected_alpha,
+                    selected_font,
+                    self.bg_enabled,
+                    self.bg_color.name(),
                 )
             except Exception:
                 pass
@@ -280,6 +367,12 @@ class ColorPickerDialog(QDialog):
     def get_alpha(self):
         """Возвращает прозрачность (0-255)"""
         return self.selected_alpha
+
+    def get_bg_enabled(self):
+        return bool(self.bg_enabled)
+
+    def get_bg_color(self):
+        return self.bg_color.name()
 
     def mousePressEvent(self, event):
         """Начало перетаскивания окна"""
@@ -307,8 +400,18 @@ class ColorPickerDialog(QDialog):
                     if hasattr(self.parent, "ui")
                     else 40
                 )
+                selected_font = "Arial"
+                if hasattr(self.parent, "current_overlay_font"):
+                    selected_font = (
+                        self.parent.current_overlay_font or ""
+                    ).strip() or "Arial"
                 self.parent.logic.overlay.update_style(
-                    self.original_color, overlay_size, self.original_alpha
+                    self.original_color,
+                    overlay_size,
+                    self.original_alpha,
+                    selected_font,
+                    self.original_bg_enabled,
+                    self.original_bg_color,
                 )
             except Exception:
                 pass
