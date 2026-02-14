@@ -9,6 +9,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 class FundingMonitor(QObject):
     alert_signal = pyqtSignal(object)
     log_signal = pyqtSignal(object)
+    status_signal = pyqtSignal(object)
     schedule_signal = pyqtSignal(int)
 
     def __init__(self, ui):
@@ -88,19 +89,35 @@ class FundingMonitor(QObject):
         }
 
     def _poll_thread(self, settings):
+        exchange_defs = [
+            ("binance", "Binance", self._fetch_binance),
+            ("bybit", "Bybit", self._fetch_bybit),
+            ("okx", "OKX", self._fetch_okx),
+            ("gate", "Gate", self._fetch_gate),
+            ("bitget", "Bitget", self._fetch_bitget),
+        ]
+        selected = set(settings.get("exchanges", []))
+        status_map = {
+            key: {
+                "name": name,
+                "enabled": key in selected,
+                "fetched": 0,
+                "passed": 0,
+                "error": "",
+            }
+            for key, name, _ in exchange_defs
+        }
+
         try:
             data = []
             interval_ms = 60000
-            if "binance" in settings["exchanges"]:
-                data.extend(self._safe_fetch_exchange(self._fetch_binance, "Binance"))
-            if "bybit" in settings["exchanges"]:
-                data.extend(self._safe_fetch_exchange(self._fetch_bybit, "Bybit"))
-            if "okx" in settings["exchanges"]:
-                data.extend(self._safe_fetch_exchange(self._fetch_okx, "OKX"))
-            if "gate" in settings["exchanges"]:
-                data.extend(self._safe_fetch_exchange(self._fetch_gate, "Gate"))
-            if "bitget" in settings["exchanges"]:
-                data.extend(self._safe_fetch_exchange(self._fetch_bitget, "Bitget"))
+            for key, name, fetcher in exchange_defs:
+                if key not in selected:
+                    continue
+                items, error_text = self._safe_fetch_exchange_with_status(fetcher, name)
+                status_map[key]["fetched"] = len(items)
+                status_map[key]["error"] = error_text
+                data.extend(items)
 
             now_ms = int(time.time() * 1000)
             minutes_list = self._parse_minutes(settings["minutes_text"])
@@ -110,6 +127,13 @@ class FundingMonitor(QObject):
             min_minutes = None
             # Находим максимальное значение из minutes_list для фильтрации логов
             max_minutes_filter = max(minutes_list) if minutes_list else 999999
+            exchange_to_key = {
+                "binance": "binance",
+                "bybit": "bybit",
+                "okx": "okx",
+                "gate": "gate",
+                "bitget": "bitget",
+            }
 
             for item in data:
                 next_time = item.get("next_funding_time")
@@ -125,6 +149,12 @@ class FundingMonitor(QObject):
 
                 # Логируем все, что проходит порог и в пределах максимального времени
                 if passes_threshold and minutes_to <= max_minutes_filter:
+                    exchange_key = exchange_to_key.get(
+                        str(item.get("exchange", "")).strip().lower(), ""
+                    )
+                    if exchange_key in status_map:
+                        status_map[exchange_key]["passed"] += 1
+
                     log_key = self._cache_key(
                         "log",
                         item["exchange"],
@@ -166,9 +196,22 @@ class FundingMonitor(QObject):
                                             "kind": "alert",
                                         }
                                     )
+            self.status_signal.emit(
+                {
+                    "updated_at_ms": now_ms,
+                    "exchanges": status_map,
+                }
+            )
             self.schedule_signal.emit(interval_ms)
         except Exception as exc:
             self.log_signal.emit(f"Funding error: {exc}")
+            self.status_signal.emit(
+                {
+                    "updated_at_ms": int(time.time() * 1000),
+                    "exchanges": status_map,
+                    "error": str(exc),
+                }
+            )
             self.schedule_signal.emit(60000)
         finally:
             self._inflight = False
@@ -180,6 +223,17 @@ class FundingMonitor(QObject):
         except Exception as exc:
             self.log_signal.emit(f"Funding fetch error ({exchange_name}): {exc}")
             return []
+
+    def _safe_fetch_exchange_with_status(self, fetcher, exchange_name):
+        try:
+            items = fetcher()
+            if not isinstance(items, list):
+                return [], ""
+            return items, ""
+        except Exception as exc:
+            text = str(exc)
+            self.log_signal.emit(f"Funding fetch error ({exchange_name}): {text}")
+            return [], text
 
     def _cache_key(self, kind, exchange, symbol, next_time, extra):
         return f"{kind}:{exchange}:{symbol}:{next_time}:{extra}"

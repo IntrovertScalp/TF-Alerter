@@ -288,6 +288,7 @@ class UI_Widget(QWidget):
                 "funding_sound_file": "Звук фандинга:",
                 "funding_sound_pick": "Выбрать звук",
                 "funding_log": "Лог алертов:",
+                "funding_status": "Статус бирж (получено/прошло фильтр):",
                 "funding_upcoming": "Предстоящие",
                 "funding_triggered": "Сработавшие",
                 "funding_clear": "Очистить лог",
@@ -295,7 +296,7 @@ class UI_Widget(QWidget):
                 "vol": "ГРОМКОСТЬ",
                 "font": "РАЗМЕР ЧАСОВ",
                 "scale": "МАСШТАБ ИНТЕРФЕЙСА",
-                "show": "ОТОБРАЖАТЬ ЧАСЫ (OVERLAY)",
+                "show": "Отображать часы",
                 "lock_move": "Блокировать перемещение часов",
                 "btn": "ЦВЕТ ЧАСОВ",
                 "font_btn": "Шрифт",
@@ -338,13 +339,14 @@ class UI_Widget(QWidget):
                 "funding_sound_file": "Funding sound:",
                 "funding_sound_pick": "Pick sound",
                 "funding_log": "Alert log:",
+                "funding_status": "Exchange status (fetched/passed filter):",
                 "funding_upcoming": "Upcoming",
                 "funding_triggered": "Triggered",
                 "funding_clear": "Clear log",
                 "vol": "VOLUME",
                 "font": "CLOCK SIZE",
                 "scale": "INTERFACE SCALE",
-                "show": "DISPLAY CLOCK (OVERLAY)",
+                "show": "Display Clock",
                 "lock_move": "Lock Clock Movement",
                 "btn": "CLOCK COLOR",
                 "font_btn": "Font",
@@ -506,23 +508,27 @@ class UI_Widget(QWidget):
         self._sync_color_btn_size()
         QTimer.singleShot(0, self._sync_color_btn_size)
         color_layout.addWidget(self.color_btn)
-        color_layout.addSpacing(10)
+        color_layout.addStretch()
 
+        overlay_lay.addLayout(color_layout)
+
+        font_layout = QHBoxLayout()
+        font_layout.setContentsMargins(0, 0, 0, 0)
+        font_layout.setSpacing(8)
         self.clock_font_label = QLabel(self.trans["ru"]["font_btn"])
         self.clock_font_label.setStyleSheet(
             "color:#888; font-weight:bold; font-size: 10px; border: none; background: transparent;"
         )
-        color_layout.addWidget(self.clock_font_label)
+        font_layout.addWidget(self.clock_font_label)
 
         self.clock_font_combo = QFontComboBox()
         self.clock_font_combo.setStyleSheet(self._combo_style())
-        self.clock_font_combo.setMinimumWidth(170)
+        self.clock_font_combo.setMinimumWidth(210)
         self.clock_font_combo.setToolTip("Выбор шрифта часов")
-        color_layout.addWidget(self.clock_font_combo)
+        font_layout.addWidget(self.clock_font_combo)
+        font_layout.addStretch()
 
-        color_layout.setAlignment(self.color_btn, Qt.AlignmentFlag.AlignLeft)
-        color_layout.addStretch()
-        overlay_lay.addLayout(color_layout)
+        overlay_lay.addLayout(font_layout)
 
         self.main_layout.addWidget(self.card_overlay)
 
@@ -599,6 +605,12 @@ class UI_Widget(QWidget):
         exchanges_grid.addWidget(self.funding_bitget_check, 1, 1)
         exchanges_grid.setColumnStretch(2, 1)
         funding_content_layout.addLayout(exchanges_grid)
+
+        self.funding_status_label = QLabel()
+        self.funding_status_label.setStyleSheet("color:#777; font-size: 9px;")
+        self.funding_status_label.setWordWrap(True)
+        self.funding_status_label.setText(self.trans["ru"]["funding_status"])
+        funding_content_layout.addWidget(self.funding_status_label)
 
         minutes_row = QHBoxLayout()
         self.funding_minutes_label = QLabel(self.trans["ru"]["funding_minutes"])
@@ -804,6 +816,7 @@ class UI_Widget(QWidget):
         self.funding_threshold_neg_label.setText(t["funding_threshold_neg"])
         self.funding_volume_label.setText(t["vol"])
         self.funding_log_label.setText(t["funding_log"])
+        self.funding_status_label.setText(t["funding_status"])
         self.funding_log_upcoming_btn.setText(t["funding_upcoming"])
         self.funding_log_triggered_btn.setText(t["funding_triggered"])
         self.funding_refresh_btn.setText(t["funding_refresh"])

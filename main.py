@@ -93,6 +93,7 @@ class MainWindow(QMainWindow):
         self.funding_monitor = FundingMonitor(self.ui)
         self.funding_monitor.alert_signal.connect(self.on_funding_alert)
         self.funding_monitor.log_signal.connect(self.append_funding_log_text)
+        self.funding_monitor.status_signal.connect(self.on_funding_status_update)
 
         # Передаем ссылку на main_window в overlay для автосохранения
         self.logic.overlay.main_window = self
@@ -114,6 +115,7 @@ class MainWindow(QMainWindow):
         self.triggered_alerts = []  # Список завершённых алертов
         self.max_triggered_alerts = 10  # Максимум зачеркнутых алертов
         self._funding_log_view_mode = "upcoming"
+        self._funding_exchange_status = {}
         self._edge_tts_queue = []
         self._edge_tts_busy = False
         self._edge_tts_started = False
@@ -212,9 +214,10 @@ class MainWindow(QMainWindow):
 
         # Разрешаем сохранение
         self.loading_settings = False
+        self._render_funding_exchange_status()
 
         # Запускаем таймеры часов и логики алертов
-        self.logic.timer.start(1000)  # Основная логика каждую секунду
+        self.logic.start()  # Основная логика (250мс, precise) для стабильных тиков
         self.logic.overlay_update_timer.start()  # Обновление часов каждые 100мс
 
         # Запускаем funding monitor только если фандинг включен
@@ -838,7 +841,9 @@ class MainWindow(QMainWindow):
             self.ui.funding_opacity_effect.setOpacity(0.3)  # Затемнение
             self.funding_monitor.stop()
             self._stop_funding_audio(tts_only=False)
+            self._funding_exchange_status = {}
 
+        self._render_funding_exchange_status()
         self.save_settings()
 
     def on_funding_exchanges_changed(self, *args):
@@ -854,6 +859,7 @@ class MainWindow(QMainWindow):
         self.triggered_alerts = []
         self._pending_tts_entries = {}
         self.ui.funding_log_list.clear()
+        self._funding_exchange_status = {}
 
         if self.ui.funding_enable_check.isChecked() and hasattr(
             self, "funding_monitor"
@@ -861,6 +867,7 @@ class MainWindow(QMainWindow):
             self.funding_monitor.timer.stop()
             self.funding_monitor.poll()
 
+        self._render_funding_exchange_status()
         self.save_settings()
 
     def request_minimize(self):
@@ -887,7 +894,7 @@ class MainWindow(QMainWindow):
 
             # 3. Принудительно увеличиваем кнопки (чтобы текст не заходил под них)
             self.ui.color_btn.setFixedSize(int(125 * factor), int(38 * factor))
-            self.ui.clock_font_combo.setMinimumWidth(int(170 * factor))
+            self.ui.clock_font_combo.setMinimumWidth(int(210 * factor))
             self.ui.lang_sel.setFixedSize(int(65 * factor), int(28 * factor))
 
             # 4. Стили контейнера
@@ -1234,6 +1241,66 @@ class MainWindow(QMainWindow):
             f"до фандинга {entry['minutes_to']} мин"
         )
         self.append_funding_log(entry, trigger_alert=True)
+
+    def on_funding_status_update(self, payload):
+        if not isinstance(payload, dict):
+            return
+        status_map = payload.get("exchanges")
+        if isinstance(status_map, dict):
+            self._funding_exchange_status = status_map
+            self._render_funding_exchange_status()
+
+    def _render_funding_exchange_status(self):
+        if not hasattr(self.ui, "funding_status_label"):
+            return
+
+        status_map = (
+            self._funding_exchange_status
+            if isinstance(self._funding_exchange_status, dict)
+            else {}
+        )
+
+        exchanges = [
+            ("binance", "Binance", self.ui.funding_binance_check.isChecked()),
+            ("bybit", "Bybit", self.ui.funding_bybit_check.isChecked()),
+            ("okx", "OKX", self.ui.funding_okx_check.isChecked()),
+            ("gate", "Gate", self.ui.funding_gate_check.isChecked()),
+            ("bitget", "Bitget", self.ui.funding_bitget_check.isChecked()),
+        ]
+
+        if not self.ui.funding_enable_check.isChecked():
+            chunks = [
+                f"<span style='color:#666;'>● {name}: off</span>"
+                for _, name, _ in exchanges
+            ]
+            self.ui.funding_status_label.setText("&nbsp;&nbsp;".join(chunks))
+            return
+
+        chunks = []
+        for key, name, is_enabled in exchanges:
+            state = status_map.get(key, {}) if isinstance(status_map, dict) else {}
+            fetched = int(state.get("fetched", 0) or 0)
+            passed = int(state.get("passed", 0) or 0)
+            error = str(state.get("error", "") or "").strip()
+
+            if not is_enabled:
+                chunks.append(f"<span style='color:#666;'>● {name}: off</span>")
+                continue
+
+            if error:
+                chunks.append(
+                    f"<span style='color:{config.COLORS['danger']};'>● {name}: err</span>"
+                )
+                continue
+
+            if fetched > 0:
+                chunks.append(
+                    f"<span style='color:{config.COLORS['accent']};'>● {name}: {fetched}/{passed}</span>"
+                )
+            else:
+                chunks.append(f"<span style='color:#888;'>● {name}: 0/0</span>")
+
+        self.ui.funding_status_label.setText("&nbsp;&nbsp;".join(chunks))
 
     def clear_funding_log(self):
         self.ui.funding_log_list.clear()

@@ -1,7 +1,7 @@
 import os
 import datetime
 import ctypes
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal, QUrl, QSettings
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal, QUrl, QSettings, Qt
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
 import config
 from overlay import OverlayClock
@@ -38,6 +38,7 @@ class AlerterLogic(QObject):
 
         # Основной таймер для логики алертов (каждую секунду)
         self.timer = QTimer()
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.timeout.connect(self.check_time)
         self.last_played_second = -1
         self.last_tick_second = (
@@ -329,4 +330,4 @@ class AlerterLogic(QObject):
             print(f"! Timeframe '{tf_key}' not found in config.TIMEFRAMES")
 
     def start(self):
-        self.timer.start(16)  # 60 FPS для максимально быстрого отклика на смену окна
+        self.timer.start(250)  # 4 раза в секунду для стабильного захвата 55-58 сек

@@ -50,7 +50,7 @@ LOGO_PATH = _validate_paths()
 # --- 2. НАСТРОЙКИ ПРИЛОЖЕНИЯ ---
 APP_NAME = "TF-Alerter"
 APP_VERSION = "1.0"
-WINDOW_SIZE = (360, 540)
+WINDOW_SIZE = (360, 580)
 
 # --- ИНФОРМАЦИЯ ОБ АВТОРЕ ---
 AUTHOR_NAME = "IntrovertScalp"
