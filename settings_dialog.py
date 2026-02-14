@@ -72,6 +72,46 @@ class SoundColumnCheckBox(QCheckBox):
         painter.end()
 
 
+class FundingToggleCheckBox(QCheckBox):
+    """Кастомный чекбокс с текстом в стиле главного окна."""
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        indicator_rect_x = 2
+        indicator_rect_y = (self.height() - 16) // 2
+        indicator_rect = QRect(indicator_rect_x, indicator_rect_y, 16, 16)
+
+        if self.isChecked():
+            painter.fillRect(indicator_rect, QColor("#1e90ff"))
+            painter.setPen(QPen(QColor("#1e90ff"), 2))
+            painter.drawRect(indicator_rect)
+
+            pen = QPen(QColor("black"), 2, Qt.PenStyle.SolidLine)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+
+            x = indicator_rect_x
+            y = indicator_rect_y
+            painter.drawLine(int(x + 3), int(y + 9), int(x + 7), int(y + 13))
+            painter.drawLine(int(x + 7), int(y + 13), int(x + 13), int(y + 5))
+        else:
+            painter.setPen(QPen(QColor("#555"), 2))
+            painter.drawRect(indicator_rect)
+
+        text_color = QColor("#bbb") if self.isEnabled() else QColor("#666")
+        painter.setPen(text_color)
+        text_rect = QRect(25, 0, self.width() - 30, self.height())
+        painter.drawText(
+            text_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            self.text(),
+        )
+        painter.end()
+
+
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -166,7 +206,7 @@ class SettingsDialog(QDialog):
                 "donate_btn": "♥️ Поддержать",
                 "funding_title": "Фандинг: звук и голос",
                 "funding_sound_enabled": "Включить звук фандинга",
-                "funding_tts_enabled": "Включить голосовое сообщение",
+                "funding_tts_enabled": "Включить TTS озвучку",
                 "funding_sound_file": "Звук фандинга:",
                 "funding_sound_pick": "Выбрать звук",
                 "funding_tts_engine": "TTS движок:",
@@ -195,7 +235,7 @@ class SettingsDialog(QDialog):
                 "donate_btn": "♥️ Support",
                 "funding_title": "Funding: sound and voice",
                 "funding_sound_enabled": "Enable funding sound",
-                "funding_tts_enabled": "Enable voice message",
+                "funding_tts_enabled": "Enable TTS voice",
                 "funding_sound_file": "Funding sound:",
                 "funding_sound_pick": "Pick sound",
                 "funding_tts_engine": "TTS Engine:",
@@ -439,12 +479,14 @@ class SettingsDialog(QDialog):
         funding_layout.setSpacing(s(6))
 
         funding_check_row = QHBoxLayout()
-        self.funding_sound_check = QCheckBox(
+        self.funding_sound_check = FundingToggleCheckBox(
             self.translations["RU"]["funding_sound_enabled"]
         )
-        self.funding_tts_check = QCheckBox(
+        self.funding_tts_check = FundingToggleCheckBox(
             self.translations["RU"]["funding_tts_enabled"]
         )
+        self.funding_sound_check.setMinimumHeight(s(22))
+        self.funding_tts_check.setMinimumHeight(s(22))
         for cb in (self.funding_sound_check, self.funding_tts_check):
             cb.setStyleSheet(
                 f"color: {config.COLORS['text']}; font-size: {s(11)}px; border: none; background: transparent;"

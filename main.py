@@ -3,6 +3,7 @@ import datetime
 import threading
 import ctypes
 import os
+from collections import deque
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -116,6 +117,12 @@ class MainWindow(QMainWindow):
         self._edge_tts_busy = False
         self._edge_tts_started = False
         self._last_funding_sound_duration_ms = 1700
+        self._edge_ready_paths = deque()
+        self._edge_ready_lock = threading.Lock()
+        self._edge_ready_timer = QTimer()
+        self._edge_ready_timer.setInterval(50)
+        self._edge_ready_timer.timeout.connect(self._drain_edge_ready_paths)
+        self._edge_ready_timer.start()
         self._pending_tts_entries = {}
         self._funding_tts_timer = QTimer()
         self._funding_tts_timer.setSingleShot(True)
@@ -816,6 +823,7 @@ class MainWindow(QMainWindow):
         else:
             self.ui.funding_opacity_effect.setOpacity(0.3)  # Затемнение
             self.funding_monitor.stop()
+            self._stop_funding_audio(tts_only=False)
 
         self.save_settings()
 
@@ -1133,6 +1141,8 @@ class MainWindow(QMainWindow):
     def append_funding_log(self, entry, trigger_alert=False):
         if not entry:
             return
+        if not self.ui.funding_enable_check.isChecked():
+            return
         self.funding_alert_entries.append(entry)
         # Сортируем: сначала по минимальному времени, потом по максимальному % (по модулю)
         self.funding_alert_entries = sorted(
@@ -1152,6 +1162,8 @@ class MainWindow(QMainWindow):
 
     def append_funding_log_text(self, payload):
         if not isinstance(payload, dict):
+            return
+        if not self.ui.funding_enable_check.isChecked():
             return
         self.funding_alert_counter += 1
         entry = {
@@ -1176,6 +1188,8 @@ class MainWindow(QMainWindow):
         self.funding_alert_counter = 0
         self.funding_alert_entries = []
         self.triggered_alerts = []
+        self._pending_tts_entries = {}
+        self._stop_funding_audio(tts_only=False)
         if hasattr(self, "funding_monitor") and hasattr(
             self.funding_monitor, "clear_cache"
         ):
@@ -1184,6 +1198,8 @@ class MainWindow(QMainWindow):
     def _update_funding_log_realtime(self):
         """Обновляет логи в реальном времени: время, секунды, зачеркивание"""
         import time
+
+        self._enforce_funding_audio_policy()
 
         now_ms = int(time.time() * 1000)
 
@@ -1224,6 +1240,8 @@ class MainWindow(QMainWindow):
 
     def on_funding_alert(self, payload):
         if not isinstance(payload, dict):
+            return
+        if not self.ui.funding_enable_check.isChecked():
             return
         self.funding_alert_counter += 1
         ts = datetime.datetime.now().strftime("%H:%M:%S")
@@ -1292,6 +1310,8 @@ class MainWindow(QMainWindow):
 
     def _trigger_funding_alert(self, entry):
         """Триггерит алерт для записи в логе"""
+        if not self.ui.funding_enable_check.isChecked():
+            return
         time_text_ru, time_text_en = self._format_tts_time_text(entry)
 
         # Определяем сколько бирж выбрано
@@ -1342,6 +1362,45 @@ class MainWindow(QMainWindow):
                 message, tts_engine, tts_voice_id, wait_for_sound=sound_enabled
             )
 
+    def _is_funding_tts_enabled(self):
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        return settings.value("funding_tts_enabled", True, type=bool)
+
+    def _stop_funding_audio(self, tts_only=False):
+        self._edge_tts_queue = []
+        self._edge_tts_busy = False
+        self._edge_tts_started = False
+        with self._edge_ready_lock:
+            self._edge_ready_paths.clear()
+
+        if hasattr(self, "_edge_player"):
+            try:
+                self._edge_player.stop()
+            except Exception:
+                pass
+
+        engine = getattr(self, "_active_system_tts_engine", None)
+        if engine is not None:
+            try:
+                engine.stop()
+            except Exception:
+                pass
+
+        if not tts_only and hasattr(self, "_funding_player"):
+            try:
+                self._funding_player.stop()
+            except Exception:
+                pass
+
+    def _enforce_funding_audio_policy(self):
+        if not self.ui.funding_enable_check.isChecked():
+            self._stop_funding_audio(tts_only=False)
+            self._pending_tts_entries = {}
+            return
+
+        if not self._is_funding_tts_enabled():
+            self._stop_funding_audio(tts_only=True)
+
     def _entry_tts_key(self, entry):
         return (
             str(entry.get("exchange", "")),
@@ -1351,6 +1410,11 @@ class MainWindow(QMainWindow):
         )
 
     def _flush_funding_tts_queue(self):
+        if not self.ui.funding_enable_check.isChecked():
+            self._pending_tts_entries = {}
+            self._stop_funding_audio(tts_only=False)
+            return
+
         if not self._pending_tts_entries:
             return
 
@@ -1544,6 +1608,13 @@ class MainWindow(QMainWindow):
         return cleaned
 
     def _start_next_edge_tts(self):
+        if (
+            not self.ui.funding_enable_check.isChecked()
+            or not self._is_funding_tts_enabled()
+        ):
+            self._stop_funding_audio(tts_only=True)
+            return
+
         if self._edge_tts_busy:
             return
         if not self._edge_tts_queue:
@@ -1585,6 +1656,12 @@ class MainWindow(QMainWindow):
         import threading
         import time
 
+        if (
+            not self.ui.funding_enable_check.isChecked()
+            or not self._is_funding_tts_enabled()
+        ):
+            return
+
         def _run_system_tts(text, tts_voice_id, delay_ms):
             if delay_ms > 0:
                 time.sleep(delay_ms / 1000.0)
@@ -1620,6 +1697,7 @@ class MainWindow(QMainWindow):
             import pyttsx3
 
             engine = pyttsx3.init()
+            self._active_system_tts_engine = engine
             if voice_id:
                 engine.setProperty("voice", voice_id)
             engine.say(text)
@@ -1627,65 +1705,129 @@ class MainWindow(QMainWindow):
             engine.stop()
         except Exception as e:
             print(f"⚠️ Ошибка System TTS: {e}")
+        finally:
+            self._active_system_tts_engine = None
 
     def _speak_edge_tts(self, text, voice_name):
         """Проигрывание через Edge TTS (онлайн)"""
         try:
+            if (
+                not self.ui.funding_enable_check.isChecked()
+                or not self._is_funding_tts_enabled()
+            ):
+                self._edge_tts_busy = False
+                self._edge_tts_started = False
+                return
+
             import edge_tts
             import asyncio
             import tempfile
-            from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
-            from PyQt6.QtCore import QUrl
 
             # Проверяем и устанавливаем voice_name с fallback
             if not voice_name:
                 voice_name = "ru-RU-DmitryNeural"
 
-            async def generate_audio():
-                with tempfile.NamedTemporaryFile(
-                    delete=False, suffix=".mp3"
-                ) as tmp_file:
-                    tmp_path = tmp_file.name
-
-                communicate = edge_tts.Communicate(text, voice_name)
-                await communicate.save(tmp_path)
-                return tmp_path
-
-            # Генерируем аудио синхронно
-            tmp_path = asyncio.run(generate_audio())
-
-            # Проигрываем генерированный файл
-            if not hasattr(self, "_edge_player"):
-                self._edge_player = QMediaPlayer()
-                self._edge_output = QAudioOutput()
-                self._edge_player.setAudioOutput(self._edge_output)
-                self._edge_player.playbackStateChanged.connect(
-                    self._on_edge_tts_playback_state
-                )
-                self._edge_player.mediaStatusChanged.connect(
-                    self._on_edge_tts_media_status
-                )
+            def _generate_worker(message_text, current_voice):
                 try:
-                    default_device = QMediaDevices.defaultAudioOutput()
-                    self._edge_output.setDevice(default_device)
+
+                    async def generate_audio():
+                        with tempfile.NamedTemporaryFile(
+                            delete=False, suffix=".mp3"
+                        ) as tmp_file:
+                            tmp_path = tmp_file.name
+
+                        communicate = edge_tts.Communicate(message_text, current_voice)
+                        await communicate.save(tmp_path)
+                        return tmp_path
+
+                    tmp_path = asyncio.run(generate_audio())
+                    with self._edge_ready_lock:
+                        self._edge_ready_paths.append(tmp_path)
                 except Exception:
-                    pass
+                    with self._edge_ready_lock:
+                        self._edge_ready_paths.append(False)
 
-            # Получаем громкость из настроек
-            settings = QSettings("MyTradeTools", "TF-Alerter")
-            volume = settings.value("funding_volume", 80, type=int) / 100.0
-            self._edge_output.setVolume(volume)
-
-            # Останавливаем предыдущее воспроизведение
-            self._edge_player.stop()
-            self._edge_player.setSource(QUrl())
-            self._edge_player.setSource(QUrl.fromLocalFile(tmp_path))
-            self._edge_player.play()
+            thread = threading.Thread(
+                target=_generate_worker,
+                args=(text, voice_name),
+                daemon=True,
+            )
+            thread.start()
 
         except ImportError:
             print("⚠️ Edge TTS не установлен. Установите: pip install edge-tts")
+            self._edge_tts_busy = False
+            self._edge_tts_started = False
+            QTimer.singleShot(50, self._start_next_edge_tts)
         except Exception as e:
             print(f"⚠️ Ошибка Edge TTS: {e}")
+            self._edge_tts_busy = False
+            self._edge_tts_started = False
+            QTimer.singleShot(50, self._start_next_edge_tts)
+
+    def _drain_edge_ready_paths(self):
+        if not self._edge_tts_busy:
+            return
+
+        if (
+            not self.ui.funding_enable_check.isChecked()
+            or not self._is_funding_tts_enabled()
+        ):
+            self._stop_funding_audio(tts_only=True)
+            return
+
+        _no_item = object()
+        ready_item = _no_item
+        with self._edge_ready_lock:
+            if self._edge_ready_paths:
+                ready_item = self._edge_ready_paths.popleft()
+
+        if ready_item is _no_item:
+            return
+
+        if ready_item is False:
+            self._edge_tts_busy = False
+            self._edge_tts_started = False
+            QTimer.singleShot(50, self._start_next_edge_tts)
+            return
+
+        if isinstance(ready_item, str):
+            self._play_edge_tts_file(ready_item)
+
+    def _play_edge_tts_file(self, tmp_path):
+        from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
+        from PyQt6.QtCore import QUrl
+
+        if (
+            not self.ui.funding_enable_check.isChecked()
+            or not self._is_funding_tts_enabled()
+        ):
+            self._edge_tts_busy = False
+            self._edge_tts_started = False
+            return
+
+        if not hasattr(self, "_edge_player"):
+            self._edge_player = QMediaPlayer()
+            self._edge_output = QAudioOutput()
+            self._edge_player.setAudioOutput(self._edge_output)
+            self._edge_player.playbackStateChanged.connect(
+                self._on_edge_tts_playback_state
+            )
+            self._edge_player.mediaStatusChanged.connect(self._on_edge_tts_media_status)
+            try:
+                default_device = QMediaDevices.defaultAudioOutput()
+                self._edge_output.setDevice(default_device)
+            except Exception:
+                pass
+
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        volume = settings.value("funding_volume", 80, type=int) / 100.0
+        self._edge_output.setVolume(volume)
+
+        self._edge_player.stop()
+        self._edge_player.setSource(QUrl())
+        self._edge_player.setSource(QUrl.fromLocalFile(tmp_path))
+        self._edge_player.play()
 
     def _render_funding_log(self):
         import time
