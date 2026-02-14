@@ -1,23 +1,26 @@
 import sys
+import datetime
+import threading
 import ctypes
-import os
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
     QVBoxLayout,
     QWidget,
-    QColorDialog,
     QPushButton,
     QHBoxLayout,
     QCheckBox,
+    QListWidgetItem,
+    QToolTip,
 )
-from PyQt6.QtGui import QColor, QIcon, QFont
-from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtGui import QColor, QIcon, QFont, QGuiApplication, QCursor
+from PyQt6.QtCore import Qt, QSettings, QTimer
 import config
 import gui
 import logic
 from hotkey_manager import HotkeyManager
 from color_picker_dialog import ColorPickerDialog
+from funding_alerts import FundingMonitor
 
 # Установка App User Model ID для иконки на панели задач (Windows)
 try:
@@ -84,6 +87,11 @@ class MainWindow(QMainWindow):
         self.logic = logic.AlerterLogic(self.ui)
         self.logic.time_signal.connect(self.ui.time_label.setText)
 
+        # Funding alerts
+        self.funding_monitor = FundingMonitor(self.ui)
+        self.funding_monitor.alert_signal.connect(self.on_funding_alert)
+        self.funding_monitor.log_signal.connect(self.append_funding_log_text)
+
         # Передаем ссылку на main_window в overlay для автосохранения
         self.logic.overlay.main_window = self
 
@@ -96,6 +104,8 @@ class MainWindow(QMainWindow):
         self.overlay_bg_enabled = False
         self.overlay_bg_color = "#000000"
         self.overlay_move_locked = False
+        self.funding_alert_counter = 0
+        self.funding_alert_entries = []
 
         # --- ПОДКЛЮЧЕНИЕ СИГНАЛОВ ---
         self.ui.color_btn.clicked.connect(self.change_color)
@@ -155,6 +165,15 @@ class MainWindow(QMainWindow):
         self.ui.lang_sel.currentTextChanged.connect(self.save_settings)
         self.ui.cb_overlay.toggled.connect(self.save_settings)
         self.ui.cb_lock_overlay_move.toggled.connect(self.save_settings)
+        self.ui.funding_binance_check.toggled.connect(self.save_settings)
+        self.ui.funding_bybit_check.toggled.connect(self.save_settings)
+        self.ui.funding_before_check.toggled.connect(self.save_settings)
+        self.ui.funding_percent_check.toggled.connect(self.save_settings)
+        self.ui.funding_minutes_edit.textChanged.connect(self.save_settings)
+        self.ui.funding_threshold_pos_edit.textChanged.connect(self.save_settings)
+        self.ui.funding_threshold_neg_edit.textChanged.connect(self.save_settings)
+        self.ui.funding_clear_btn.clicked.connect(self.clear_funding_log)
+        self.ui.funding_log_list.itemClicked.connect(self.copy_funding_symbol)
 
         # Подключаем автосохранение для галочек таймфреймов
         self.reconnect_checkbox_signals()
@@ -165,6 +184,7 @@ class MainWindow(QMainWindow):
         # Запускаем таймеры часов и логики алертов
         self.logic.timer.start(1000)  # Основная логика каждую секунду
         self.logic.overlay_update_timer.start()  # Обновление часов каждые 100мс
+        self.funding_monitor.start()
 
     def _tf_registry_key(self, tf):
         # Windows registry value names are case-insensitive, so 1m and 1M collide.
@@ -785,6 +805,29 @@ class MainWindow(QMainWindow):
         settings.setValue(
             "overlay_move_locked", self.ui.cb_lock_overlay_move.isChecked()
         )
+        settings.setValue(
+            "funding_binance_enabled", self.ui.funding_binance_check.isChecked()
+        )
+        settings.setValue(
+            "funding_bybit_enabled", self.ui.funding_bybit_check.isChecked()
+        )
+        settings.setValue(
+            "funding_alert_before", self.ui.funding_before_check.isChecked()
+        )
+        settings.setValue(
+            "funding_alert_percent", self.ui.funding_percent_check.isChecked()
+        )
+        settings.setValue(
+            "funding_minutes", self.ui.funding_minutes_edit.text().strip()
+        )
+        settings.setValue(
+            "funding_threshold_pos",
+            self.ui.funding_threshold_pos_edit.text().strip(),
+        )
+        settings.setValue(
+            "funding_threshold_neg",
+            self.ui.funding_threshold_neg_edit.text().strip(),
+        )
 
         # Сохраняем режим и список приложений для overlay
         settings.setValue("overlay_show_mode", config.OVERLAY_SHOW_MODE)
@@ -864,6 +907,27 @@ class MainWindow(QMainWindow):
         )
         self.ui.cb_lock_overlay_move.setChecked(self.overlay_move_locked)
         self.logic.overlay.move_locked = self.overlay_move_locked
+
+        self.ui.funding_binance_check.setChecked(
+            settings.value("funding_binance_enabled", True, type=bool)
+        )
+        self.ui.funding_bybit_check.setChecked(
+            settings.value("funding_bybit_enabled", True, type=bool)
+        )
+        self.ui.funding_before_check.setChecked(
+            settings.value("funding_alert_before", True, type=bool)
+        )
+        self.ui.funding_percent_check.setChecked(
+            settings.value("funding_alert_percent", True, type=bool)
+        )
+        self.ui.funding_minutes_edit.setText(settings.value("funding_minutes", "15,5"))
+        threshold_legacy = settings.value("funding_threshold", "")
+        self.ui.funding_threshold_pos_edit.setText(
+            settings.value("funding_threshold_pos", threshold_legacy or "1.0")
+        )
+        self.ui.funding_threshold_neg_edit.setText(
+            settings.value("funding_threshold_neg", threshold_legacy or "1.0")
+        )
 
         config.COLORS["accent"] = saved_color
         config.COLORS["accent_alpha"] = saved_alpha
@@ -977,6 +1041,121 @@ class MainWindow(QMainWindow):
             self.overlay_bg_enabled,
             self.overlay_bg_color,
         )
+
+    def append_funding_log(self, entry):
+        if not entry:
+            return
+        self.funding_alert_entries.append(entry)
+        self.funding_alert_entries = sorted(
+            self.funding_alert_entries,
+            key=lambda item: item.get("minutes_to", 999999),
+        )[:200]
+        self._render_funding_log()
+
+    def append_funding_log_text(self, message):
+        if not message:
+            return
+        self.funding_alert_counter += 1
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        entry = {
+            "index": self.funding_alert_counter,
+            "ts": ts,
+            "exchange": "",
+            "symbol": "",
+            "minutes_to": 999999,
+            "signed_rate_pct": 0.0,
+            "message": message,
+        }
+        self.append_funding_log(entry)
+
+    def clear_funding_log(self):
+        self.ui.funding_log_list.clear()
+        self.funding_alert_counter = 0
+        self.funding_alert_entries = []
+
+    def on_funding_alert(self, payload):
+        if not isinstance(payload, dict):
+            return
+        self.funding_alert_counter += 1
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        entry = {
+            "index": self.funding_alert_counter,
+            "ts": ts,
+            "exchange": payload.get("exchange", ""),
+            "symbol": payload.get("symbol", ""),
+            "minutes_to": payload.get("minutes_to", 0),
+            "signed_rate_pct": payload.get("signed_rate_pct", 0.0),
+        }
+        entry["message"] = (
+            f"{entry['exchange']} {entry['symbol']} — "
+            f"funding {entry['signed_rate_pct']:.3f}% — "
+            f"до фандинга {entry['minutes_to']} мин"
+        )
+        self.append_funding_log(entry)
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        sound_enabled = settings.value("funding_sound_enabled", True, type=bool)
+        tts_enabled = settings.value("funding_tts_enabled", True, type=bool)
+        if sound_enabled:
+            try:
+                sound_file = settings.value("funding_sound_file", "")
+                if sound_file:
+                    self.logic.play_voice(sound_file, "transition")
+                else:
+                    self.logic.play_voice(config.SOUND_TICK_LONG, "transition")
+            except Exception:
+                pass
+        if tts_enabled:
+            voice_id = settings.value("funding_tts_voice_id", "")
+            self._speak_tts_async(entry["message"], voice_id)
+
+    def _speak_tts_async(self, message, voice_id):
+        def _run_tts(text, tts_voice_id):
+            try:
+                import pyttsx3
+
+                engine = pyttsx3.init()
+                if tts_voice_id:
+                    engine.setProperty("voice", tts_voice_id)
+                engine.say(text)
+                engine.runAndWait()
+            except Exception:
+                pass
+
+        thread = threading.Thread(
+            target=_run_tts, args=(message, voice_id), daemon=True
+        )
+        thread.start()
+
+    def _render_funding_log(self):
+        self.ui.funding_log_list.clear()
+        for entry in self.funding_alert_entries:
+            text = f"{entry['index']}. [{entry['ts']}] {entry['message']}"
+            item = QListWidgetItem(text)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignLeft)
+            item.setData(Qt.ItemDataRole.UserRole, entry)
+            font = item.font()
+            font.setPointSize(9)
+            item.setFont(font)
+            minutes_to = entry.get("minutes_to", 999999)
+            if minutes_to <= 5:
+                item.setForeground(QColor(config.COLORS["danger"]))
+            elif minutes_to <= 15:
+                item.setForeground(QColor(config.COLORS["accent"]))
+            else:
+                item.setForeground(QColor(config.COLORS["text"]))
+            self.ui.funding_log_list.addItem(item)
+
+    def copy_funding_symbol(self, item):
+        if not item:
+            return
+        entry = item.data(Qt.ItemDataRole.UserRole) or {}
+        symbol = entry.get("symbol", "")
+        if not symbol:
+            return
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(symbol)
+        QToolTip.showText(QCursor.pos(), f"Скопировано: {symbol}")
+        QTimer.singleShot(2000, QToolTip.hideText)
 
     def toggle_overlay_move_lock(self, state):
         self.overlay_move_locked = bool(state)

@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QStyledItemDelegate,
     QFontComboBox,
+    QTabWidget,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSettings, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
@@ -254,6 +255,26 @@ class UI_Widget(QWidget):
         self.old_pos = None
         self.trans = {
             "ru": {
+                "main_tab": "Главное",
+                "funding_tab": "Фандинг",
+                "funding_title": "Алерты фандинга",
+                "funding_exchanges": "Биржи:",
+                "funding_binance": "Binance",
+                "funding_bybit": "Bybit",
+                "funding_alerts": "Типы алертов:",
+                "funding_before": "До фандинга",
+                "funding_percent": "Funding %",
+                "funding_minutes": "Минуты до фандинга:",
+                "funding_threshold": "Порог %:",
+                "funding_threshold_pos": "Порог +%:",
+                "funding_threshold_neg": "Порог -%:",
+                "funding_tts": "Голос (TTS)",
+                "funding_sound": "Звук",
+                "funding_voice": "Голос TTS:",
+                "funding_sound_file": "Звук фандинга:",
+                "funding_sound_pick": "Выбрать звук",
+                "funding_log": "Лог алертов:",
+                "funding_clear": "Очистить лог",
                 "vol": "ГРОМКОСТЬ",
                 "font": "РАЗМЕР ЧАСОВ",
                 "scale": "МАСШТАБ ИНТЕРФЕЙСА",
@@ -278,6 +299,26 @@ class UI_Widget(QWidget):
                 },
             },
             "en": {
+                "main_tab": "Main",
+                "funding_tab": "Funding",
+                "funding_title": "Funding Alerts",
+                "funding_exchanges": "Exchanges:",
+                "funding_binance": "Binance",
+                "funding_bybit": "Bybit",
+                "funding_alerts": "Alert Types:",
+                "funding_before": "Before Funding",
+                "funding_percent": "Funding %",
+                "funding_minutes": "Minutes before funding:",
+                "funding_threshold": "Threshold %:",
+                "funding_threshold_pos": "Threshold +%:",
+                "funding_threshold_neg": "Threshold -%:",
+                "funding_tts": "Voice (TTS)",
+                "funding_sound": "Sound",
+                "funding_voice": "TTS Voice:",
+                "funding_sound_file": "Funding sound:",
+                "funding_sound_pick": "Pick sound",
+                "funding_log": "Alert log:",
+                "funding_clear": "Clear log",
                 "vol": "VOLUME",
                 "font": "CLOCK SIZE",
                 "scale": "INTERFACE SCALE",
@@ -302,7 +343,20 @@ class UI_Widget(QWidget):
                 },
             },
         }
-        self.main_layout = QVBoxLayout(self)
+        self.root_layout = QVBoxLayout(self)
+        self.root_layout.setContentsMargins(0, 0, 0, 0)
+        self.root_layout.setSpacing(0)
+
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet(
+            f"QTabWidget::pane {{ border: none; }} "
+            f"QTabBar::tab {{ background: {config.COLORS['panel']}; color: {config.COLORS['text']}; padding: 6px 10px; border: 1px solid {config.COLORS['border']}; border-bottom: none; }} "
+            f"QTabBar::tab:selected {{ background: {config.COLORS['background']}; color: {config.COLORS['text']}; }}"
+        )
+        self.root_layout.addWidget(self.tabs)
+
+        self.main_tab = QWidget()
+        self.main_layout = QVBoxLayout(self.main_tab)
         self.main_layout.setContentsMargins(20, 10, 20, 20)
         self.main_layout.setSpacing(10)
         self.selected_clock_font = "Arial"
@@ -445,6 +499,123 @@ class UI_Widget(QWidget):
 
         self.main_layout.addWidget(self.card_overlay)
 
+        self.tabs.addTab(self.main_tab, self.trans["ru"]["main_tab"])
+
+        self.funding_tab = QWidget()
+        funding_layout = QVBoxLayout(self.funding_tab)
+        funding_layout.setContentsMargins(20, 10, 20, 20)
+        funding_layout.setSpacing(10)
+
+        funding_title = QLabel(self.trans["ru"]["funding_title"])
+        funding_title.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: 12px; font-weight: bold;"
+        )
+        funding_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        funding_layout.addWidget(funding_title)
+
+        self.funding_exchanges_label = QLabel(self.trans["ru"]["funding_exchanges"])
+        self.funding_exchanges_label.setStyleSheet(
+            "color:#888; font-weight:bold; font-size: 10px;"
+        )
+        funding_layout.addWidget(self.funding_exchanges_label)
+
+        exchanges_row = QHBoxLayout()
+        self.funding_binance_check = TFCheckBox(
+            self.trans["ru"]["funding_binance"], "funding_binance"
+        )
+        self.funding_bybit_check = TFCheckBox(
+            self.trans["ru"]["funding_bybit"], "funding_bybit"
+        )
+        self.funding_binance_check.setStyleSheet(self._tf_check_style())
+        self.funding_bybit_check.setStyleSheet(self._tf_check_style())
+        exchanges_row.addWidget(self.funding_binance_check)
+        exchanges_row.addWidget(self.funding_bybit_check)
+        exchanges_row.addStretch()
+        funding_layout.addLayout(exchanges_row)
+
+        self.funding_alerts_label = QLabel(self.trans["ru"]["funding_alerts"])
+        self.funding_alerts_label.setStyleSheet(
+            "color:#888; font-weight:bold; font-size: 10px;"
+        )
+        funding_layout.addWidget(self.funding_alerts_label)
+
+        alerts_row = QHBoxLayout()
+        self.funding_before_check = TFCheckBox(
+            self.trans["ru"]["funding_before"], "funding_before"
+        )
+        self.funding_percent_check = TFCheckBox(
+            self.trans["ru"]["funding_percent"], "funding_percent"
+        )
+        self.funding_before_check.setStyleSheet(self._tf_check_style())
+        self.funding_percent_check.setStyleSheet(self._tf_check_style())
+        alerts_row.addWidget(self.funding_before_check)
+        alerts_row.addWidget(self.funding_percent_check)
+        alerts_row.addStretch()
+        funding_layout.addLayout(alerts_row)
+
+        minutes_row = QHBoxLayout()
+        self.funding_minutes_label = QLabel(self.trans["ru"]["funding_minutes"])
+        self.funding_minutes_label.setStyleSheet(
+            "color:#888; font-weight:bold; font-size: 10px;"
+        )
+        self.funding_minutes_edit = QLineEdit()
+        self.funding_minutes_edit.setPlaceholderText("15,5")
+        self.funding_minutes_edit.setStyleSheet(self._input_style())
+        minutes_row.addWidget(self.funding_minutes_label)
+        minutes_row.addWidget(self.funding_minutes_edit)
+        funding_layout.addLayout(minutes_row)
+
+        threshold_row = QHBoxLayout()
+        self.funding_threshold_pos_label = QLabel(
+            self.trans["ru"]["funding_threshold_pos"]
+        )
+        self.funding_threshold_pos_label.setStyleSheet(
+            "color:#888; font-weight:bold; font-size: 10px;"
+        )
+        self.funding_threshold_pos_edit = QLineEdit()
+        self.funding_threshold_pos_edit.setPlaceholderText("1.0")
+        self.funding_threshold_pos_edit.setStyleSheet(self._input_style())
+        threshold_row.addWidget(self.funding_threshold_pos_label)
+        threshold_row.addWidget(self.funding_threshold_pos_edit)
+        funding_layout.addLayout(threshold_row)
+
+        threshold_row_neg = QHBoxLayout()
+        self.funding_threshold_neg_label = QLabel(
+            self.trans["ru"]["funding_threshold_neg"]
+        )
+        self.funding_threshold_neg_label.setStyleSheet(
+            "color:#888; font-weight:bold; font-size: 10px;"
+        )
+        self.funding_threshold_neg_edit = QLineEdit()
+        self.funding_threshold_neg_edit.setPlaceholderText("1.0")
+        self.funding_threshold_neg_edit.setStyleSheet(self._input_style())
+        threshold_row_neg.addWidget(self.funding_threshold_neg_label)
+        threshold_row_neg.addWidget(self.funding_threshold_neg_edit)
+        funding_layout.addLayout(threshold_row_neg)
+
+        self.funding_log_label = QLabel(self.trans["ru"]["funding_log"])
+        self.funding_log_label.setStyleSheet(
+            "color:#888; font-weight:bold; font-size: 10px;"
+        )
+        funding_layout.addWidget(self.funding_log_label)
+
+        self.funding_log_list = QListWidget()
+        self.funding_log_list.setStyleSheet(self._list_style())
+        self.funding_log_list.setWordWrap(True)
+        self.funding_log_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        funding_layout.addWidget(self.funding_log_list)
+
+        clear_row = QHBoxLayout()
+        self.funding_clear_btn = QPushButton(self.trans["ru"]["funding_clear"])
+        self.funding_clear_btn.setStyleSheet(self._select_app_style())
+        clear_row.addStretch()
+        clear_row.addWidget(self.funding_clear_btn)
+        funding_layout.addLayout(clear_row)
+
+        self.tabs.addTab(self.funding_tab, self.trans["ru"]["funding_tab"])
+
         # --- УПРАВЛЕНИЕ ОКНАМИ OVERLAY ---
         # Подключаем отображение кнопки выбора приложений к изменениям режима
         self.overlay_mode_combo.currentIndexChanged.connect(
@@ -526,6 +697,20 @@ class UI_Widget(QWidget):
         self.color_btn.setText(t["btn"])
         self.clock_font_label.setText(t["font_btn"])
         self._sync_color_btn_size()
+
+        self.tabs.setTabText(0, t["main_tab"])
+        self.tabs.setTabText(1, t["funding_tab"])
+        self.funding_exchanges_label.setText(t["funding_exchanges"])
+        self.funding_binance_check.setText(t["funding_binance"])
+        self.funding_bybit_check.setText(t["funding_bybit"])
+        self.funding_alerts_label.setText(t["funding_alerts"])
+        self.funding_before_check.setText(t["funding_before"])
+        self.funding_percent_check.setText(t["funding_percent"])
+        self.funding_minutes_label.setText(t["funding_minutes"])
+        self.funding_threshold_pos_label.setText(t["funding_threshold_pos"])
+        self.funding_threshold_neg_label.setText(t["funding_threshold_neg"])
+        self.funding_log_label.setText(t["funding_log"])
+        self.funding_clear_btn.setText(t["funding_clear"])
 
         # Обновляем элементы режима
         self.overlay_mode_label.setText(t["mode"])

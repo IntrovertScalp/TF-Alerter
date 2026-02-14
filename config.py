@@ -114,6 +114,7 @@ VOICE_LEAD_TIME = 10
 # Файлы тиканья (должны лежать в папке sounds)
 SOUND_TICK = "tick.wav"  # Обычный тик (5, 4, 3, 2 сек)
 SOUND_TICK_LONG = "transition.wav"  # Длинный тик (1 сек)
+SOUND_FUNDING_ALERT = "funding_alert.wav"
 
 
 def get_sound_dir(kind: str) -> str:

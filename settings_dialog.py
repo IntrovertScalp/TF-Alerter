@@ -103,6 +103,7 @@ class SettingsDialog(QDialog):
         self._pressed_names = {}
         self._saw_non_modifier = False
         self._last_modifiers_vks = set()
+        self.funding_sound_file = ""
 
         self._user32 = ctypes.windll.user32
         self._MAPVK_VK_TO_VSC_EX = 4
@@ -156,6 +157,12 @@ class SettingsDialog(QDialog):
                 "enable_transition": "Включить",
                 "about_btn": "ℹ️ О программе",
                 "donate_btn": "♥️ Поддержать",
+                "funding_title": "Фандинг: звук и голос",
+                "funding_sound_enabled": "Включить звук фандинга",
+                "funding_tts_enabled": "Включить голос (TTS)",
+                "funding_sound_file": "Звук фандинга:",
+                "funding_sound_pick": "Выбрать звук",
+                "funding_tts_voice": "Голос TTS:",
             },
             "EN": {
                 "title": "Settings",
@@ -177,6 +184,12 @@ class SettingsDialog(QDialog):
                 "enable_transition": "Enable",
                 "about_btn": "ℹ️ About the Program",
                 "donate_btn": "♥️ Support",
+                "funding_title": "Funding: sound and voice",
+                "funding_sound_enabled": "Enable funding sound",
+                "funding_tts_enabled": "Enable voice (TTS)",
+                "funding_sound_file": "Funding sound:",
+                "funding_sound_pick": "Pick sound",
+                "funding_tts_voice": "TTS Voice:",
             },
         }
 
@@ -381,6 +394,113 @@ class SettingsDialog(QDialog):
         hotkey_input_layout.addWidget(self.hotkey_input)
         hotkey_input_layout.addWidget(self.clear_hotkey_btn)
         layout.addLayout(hotkey_input_layout)
+
+        # Настройки фандинга (звук и голос)
+        layout.addSpacing(s(8))
+
+        self.funding_title = QLabel(self.translations["RU"]["funding_title"])
+        self.funding_title.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: {s(12)}px; font-weight: bold; border: none; background: transparent;"
+        )
+        self.funding_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.funding_title)
+
+        funding_frame = QFrame()
+        funding_frame.setStyleSheet(
+            f"QFrame {{ background-color: {config.COLORS['panel']}; border: 1px solid {config.COLORS['border']}; border-radius: {s(6)}px; }}"
+        )
+        funding_layout = QVBoxLayout(funding_frame)
+        funding_layout.setContentsMargins(s(10), s(8), s(10), s(8))
+        funding_layout.setSpacing(s(6))
+
+        funding_check_row = QHBoxLayout()
+        self.funding_sound_check = QCheckBox(
+            self.translations["RU"]["funding_sound_enabled"]
+        )
+        self.funding_tts_check = QCheckBox(
+            self.translations["RU"]["funding_tts_enabled"]
+        )
+        for cb in (self.funding_sound_check, self.funding_tts_check):
+            cb.setStyleSheet(
+                f"color: {config.COLORS['text']}; font-size: {s(11)}px; border: none; background: transparent;"
+            )
+        funding_check_row.addWidget(self.funding_sound_check)
+        funding_check_row.addWidget(self.funding_tts_check)
+        funding_check_row.addStretch()
+        funding_layout.addLayout(funding_check_row)
+
+        sound_row = QHBoxLayout()
+        self.funding_sound_label = QLabel(self.translations["RU"]["funding_sound_file"])
+        self.funding_sound_label.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: {s(11)}px; border: none; background: transparent;"
+        )
+        self.funding_sound_value = QLabel("-")
+        self.funding_sound_value.setStyleSheet(
+            f"color: {config.COLORS['border']}; font-size: {s(10)}px; border: none; background: transparent;"
+        )
+        self.funding_sound_btn = QPushButton(
+            self.translations["RU"]["funding_sound_pick"]
+        )
+        self.funding_sound_btn.setFixedHeight(s(30))
+        self.funding_sound_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.funding_sound_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {config.COLORS['background']};
+                color: {config.COLORS['text']};
+                border: 1px solid {config.COLORS['border']};
+                border-radius: {s(5)}px;
+                padding: {s(4)}px {s(10)}px;
+                font-size: {s(10)}px;
+            }}
+            QPushButton:hover {{
+                border: 1px solid #1e90ff;
+            }}
+            """
+        )
+        self.funding_sound_play_btn = QPushButton("▶")
+        self.funding_sound_play_btn.setFixedSize(s(28), s(30))
+        self.funding_sound_play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.funding_sound_play_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {config.COLORS['background']};
+                color: {config.COLORS['text']};
+                border: 1px solid {config.COLORS['border']};
+                border-radius: {s(5)}px;
+                font-size: {s(11)}px;
+            }}
+            QPushButton:hover {{
+                border: 1px solid #1e90ff;
+            }}
+            """
+        )
+        self.funding_sound_btn.clicked.connect(self._select_funding_sound)
+        self.funding_sound_play_btn.clicked.connect(self._play_funding_sound)
+        sound_row.addWidget(self.funding_sound_label)
+        sound_row.addWidget(self.funding_sound_value, 1)
+        sound_row.addWidget(self.funding_sound_btn)
+        sound_row.addWidget(self.funding_sound_play_btn)
+        funding_layout.addLayout(sound_row)
+
+        voice_row = QHBoxLayout()
+        self.funding_tts_voice_label = QLabel(
+            self.translations["RU"]["funding_tts_voice"]
+        )
+        self.funding_tts_voice_label.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: {s(11)}px; border: none; background: transparent;"
+        )
+        self.funding_tts_voice_combo = QComboBox()
+        self.funding_tts_voice_combo.setStyleSheet(self._combo_style())
+        if self.funding_tts_voice_combo.lineEdit():
+            self.funding_tts_voice_combo.lineEdit().setAlignment(
+                Qt.AlignmentFlag.AlignCenter
+            )
+        voice_row.addWidget(self.funding_tts_voice_label)
+        voice_row.addWidget(self.funding_tts_voice_combo)
+        funding_layout.addLayout(voice_row)
+
+        layout.addWidget(funding_frame)
 
         layout.addSpacing(s(15))
 
@@ -942,6 +1062,76 @@ class SettingsDialog(QDialog):
         if btn:
             btn.setText(os.path.basename(target_name))
 
+    def _load_tts_voices(self):
+        try:
+            import pyttsx3
+
+            engine = pyttsx3.init()
+            voices = engine.getProperty("voices") or []
+            self.funding_tts_voice_combo.clear()
+            self.funding_tts_voice_combo.addItem("Default", "")
+            for voice in voices:
+                name = getattr(voice, "name", None) or "Voice"
+                vid = getattr(voice, "id", "")
+                langs = "".join(
+                    [str(lang).lower() for lang in getattr(voice, "languages", [])]
+                )
+                is_ru = "ru" in langs or "russian" in name.lower()
+                is_en = "en" in langs or "english" in name.lower()
+                if is_ru:
+                    label = f"[RU] {name}"
+                elif is_en:
+                    label = f"[EN] {name}"
+                else:
+                    label = f"[Other] {name}"
+                self.funding_tts_voice_combo.addItem(label, vid)
+            if self.funding_tts_voice_combo.count() == 1:
+                for voice in voices:
+                    name = getattr(voice, "name", "Voice")
+                    vid = getattr(voice, "id", "")
+                    self.funding_tts_voice_combo.addItem(name, vid)
+        except Exception:
+            self.funding_tts_voice_combo.clear()
+            self.funding_tts_voice_combo.addItem("Default", "")
+
+    def _select_funding_sound(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            self.translations[self.lang_combo.currentText()]["funding_sound_pick"],
+            "",
+            "Audio Files (*.wav *.mp3 *.ogg);;All Files (*.*)",
+        )
+        if not file_path:
+            return
+        ext = os.path.splitext(file_path)[1].lower() or ".wav"
+        target_name = f"funding_alert{ext}"
+        target_dir = config.get_sound_dir("transition")
+        os.makedirs(target_dir, exist_ok=True)
+        target_path = os.path.join(target_dir, target_name)
+        try:
+            shutil.copy2(file_path, target_path)
+        except Exception:
+            return
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        settings.setValue("funding_sound_file", target_name)
+        settings.sync()
+        self.funding_sound_file = target_name
+        self.funding_sound_value.setText(os.path.basename(target_name))
+
+    def _play_funding_sound(self):
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        filename = settings.value("funding_sound_file", "")
+        if not filename:
+            return
+        path = config.get_sound_path("transition", filename)
+        if not path or not os.path.exists(path):
+            return
+        self.preview_player.stop()
+        self.preview_player.setSource(QUrl())
+        self.preview_player.setSource(QUrl.fromLocalFile(path))
+        self.preview_output.setVolume(1.0)
+        self.preview_player.play()
+
     def _play_sound(self, tf_key, kind):
         if kind == "main":
             filename = config.TIMEFRAMES.get(tf_key, {}).get("file", "")
@@ -1048,6 +1238,26 @@ class SettingsDialog(QDialog):
                     os.path.basename(trans_name) if trans_name else ""
                 )
 
+        # Настройки фандинга (звук и TTS)
+        self.funding_sound_check.setChecked(
+            settings.value("funding_sound_enabled", True, type=bool)
+        )
+        self.funding_tts_check.setChecked(
+            settings.value("funding_tts_enabled", True, type=bool)
+        )
+        self.funding_sound_file = settings.value("funding_sound_file", "")
+        self.funding_sound_value.setText(
+            os.path.basename(self.funding_sound_file)
+            if self.funding_sound_file
+            else "-"
+        )
+        self._load_tts_voices()
+        saved_voice_id = settings.value("funding_tts_voice_id", "")
+        if saved_voice_id:
+            idx = self.funding_tts_voice_combo.findData(saved_voice_id)
+            if idx >= 0:
+                self.funding_tts_voice_combo.setCurrentIndex(idx)
+
         # Сбрасываем режим захвата
         self.capturing_hotkey = False
 
@@ -1069,6 +1279,12 @@ class SettingsDialog(QDialog):
         self.header_transition.setText(t["transition_col"])
         self.about_btn.setText(t["about_btn"])
         self.donate_btn.setText(t["donate_btn"])
+        self.funding_title.setText(t["funding_title"])
+        self.funding_sound_check.setText(t["funding_sound_enabled"])
+        self.funding_tts_check.setText(t["funding_tts_enabled"])
+        self.funding_sound_label.setText(t["funding_sound_file"])
+        self.funding_sound_btn.setText(t["funding_sound_pick"])
+        self.funding_tts_voice_label.setText(t["funding_tts_voice"])
 
         # Обновляем названия таймфреймов
         for tf_key, label in self.tf_labels.items():
@@ -1295,6 +1511,18 @@ class SettingsDialog(QDialog):
         settings.setValue(
             "sounds_transition_enabled",
             self.check_transition_enabled.isChecked(),
+        )
+
+        # Сохраняем настройки фандинга
+        settings.setValue("funding_sound_enabled", self.funding_sound_check.isChecked())
+        settings.setValue("funding_tts_enabled", self.funding_tts_check.isChecked())
+        settings.setValue(
+            "funding_tts_voice_id",
+            (
+                self.funding_tts_voice_combo.currentData()
+                if self.funding_tts_voice_combo.count() > 0
+                else ""
+            ),
         )
 
         self.accept()
