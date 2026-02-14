@@ -533,23 +533,12 @@ class UI_Widget(QWidget):
         exchanges_row.addStretch()
         funding_layout.addLayout(exchanges_row)
 
-        self.funding_alerts_label = QLabel(self.trans["ru"]["funding_alerts"])
-        self.funding_alerts_label.setStyleSheet(
-            "color:#888; font-weight:bold; font-size: 10px;"
-        )
-        funding_layout.addWidget(self.funding_alerts_label)
-
         alerts_row = QHBoxLayout()
         self.funding_before_check = TFCheckBox(
             self.trans["ru"]["funding_before"], "funding_before"
         )
-        self.funding_percent_check = TFCheckBox(
-            self.trans["ru"]["funding_percent"], "funding_percent"
-        )
         self.funding_before_check.setStyleSheet(self._tf_check_style())
-        self.funding_percent_check.setStyleSheet(self._tf_check_style())
         alerts_row.addWidget(self.funding_before_check)
-        alerts_row.addWidget(self.funding_percent_check)
         alerts_row.addStretch()
         funding_layout.addLayout(alerts_row)
 
@@ -573,13 +562,11 @@ class UI_Widget(QWidget):
             "color:#888; font-weight:bold; font-size: 10px;"
         )
         self.funding_threshold_pos_edit = QLineEdit()
-        self.funding_threshold_pos_edit.setPlaceholderText("1.0")
+        self.funding_threshold_pos_edit.setPlaceholderText("0")
         self.funding_threshold_pos_edit.setStyleSheet(self._input_style())
         threshold_row.addWidget(self.funding_threshold_pos_label)
         threshold_row.addWidget(self.funding_threshold_pos_edit)
-        funding_layout.addLayout(threshold_row)
 
-        threshold_row_neg = QHBoxLayout()
         self.funding_threshold_neg_label = QLabel(
             self.trans["ru"]["funding_threshold_neg"]
         )
@@ -587,11 +574,26 @@ class UI_Widget(QWidget):
             "color:#888; font-weight:bold; font-size: 10px;"
         )
         self.funding_threshold_neg_edit = QLineEdit()
-        self.funding_threshold_neg_edit.setPlaceholderText("1.0")
+        self.funding_threshold_neg_edit.setPlaceholderText("0")
         self.funding_threshold_neg_edit.setStyleSheet(self._input_style())
-        threshold_row_neg.addWidget(self.funding_threshold_neg_label)
-        threshold_row_neg.addWidget(self.funding_threshold_neg_edit)
-        funding_layout.addLayout(threshold_row_neg)
+        threshold_row.addWidget(self.funding_threshold_neg_label)
+        threshold_row.addWidget(self.funding_threshold_neg_edit)
+        funding_layout.addLayout(threshold_row)
+
+        # Слайдер громкости для фандинга
+        funding_vol_lay = QHBoxLayout()
+        funding_vol_lay.setContentsMargins(4, 0, 4, 0)
+        self.funding_volume_label = QLabel(self.trans["ru"]["vol"])
+        self.funding_volume_label.setStyleSheet(
+            "color:#888; font-weight:bold; font-size: 10px; border: none; background: transparent;"
+        )
+        self.funding_volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.funding_volume_slider.setStyleSheet(self._slider_style())
+        self.funding_volume_slider.setRange(0, 100)
+        self.funding_volume_slider.setValue(80)
+        funding_vol_lay.addWidget(self.funding_volume_label)
+        funding_vol_lay.addWidget(self.funding_volume_slider)
+        funding_layout.addLayout(funding_vol_lay)
 
         self.funding_log_label = QLabel(self.trans["ru"]["funding_log"])
         self.funding_log_label.setStyleSheet(
@@ -703,12 +705,11 @@ class UI_Widget(QWidget):
         self.funding_exchanges_label.setText(t["funding_exchanges"])
         self.funding_binance_check.setText(t["funding_binance"])
         self.funding_bybit_check.setText(t["funding_bybit"])
-        self.funding_alerts_label.setText(t["funding_alerts"])
         self.funding_before_check.setText(t["funding_before"])
-        self.funding_percent_check.setText(t["funding_percent"])
         self.funding_minutes_label.setText(t["funding_minutes"])
         self.funding_threshold_pos_label.setText(t["funding_threshold_pos"])
         self.funding_threshold_neg_label.setText(t["funding_threshold_neg"])
+        self.funding_volume_label.setText(t["vol"])
         self.funding_log_label.setText(t["funding_log"])
         self.funding_clear_btn.setText(t["funding_clear"])
 

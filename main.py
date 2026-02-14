@@ -2,6 +2,7 @@ import sys
 import datetime
 import threading
 import ctypes
+import os
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -168,10 +169,10 @@ class MainWindow(QMainWindow):
         self.ui.funding_binance_check.toggled.connect(self.save_settings)
         self.ui.funding_bybit_check.toggled.connect(self.save_settings)
         self.ui.funding_before_check.toggled.connect(self.save_settings)
-        self.ui.funding_percent_check.toggled.connect(self.save_settings)
         self.ui.funding_minutes_edit.textChanged.connect(self.save_settings)
         self.ui.funding_threshold_pos_edit.textChanged.connect(self.save_settings)
         self.ui.funding_threshold_neg_edit.textChanged.connect(self.save_settings)
+        self.ui.funding_volume_slider.valueChanged.connect(self.save_settings)
         self.ui.funding_clear_btn.clicked.connect(self.clear_funding_log)
         self.ui.funding_log_list.itemClicked.connect(self.copy_funding_symbol)
 
@@ -815,9 +816,6 @@ class MainWindow(QMainWindow):
             "funding_alert_before", self.ui.funding_before_check.isChecked()
         )
         settings.setValue(
-            "funding_alert_percent", self.ui.funding_percent_check.isChecked()
-        )
-        settings.setValue(
             "funding_minutes", self.ui.funding_minutes_edit.text().strip()
         )
         settings.setValue(
@@ -828,6 +826,7 @@ class MainWindow(QMainWindow):
             "funding_threshold_neg",
             self.ui.funding_threshold_neg_edit.text().strip(),
         )
+        settings.setValue("funding_volume", self.ui.funding_volume_slider.value())
 
         # Сохраняем режим и список приложений для overlay
         settings.setValue("overlay_show_mode", config.OVERLAY_SHOW_MODE)
@@ -917,17 +916,16 @@ class MainWindow(QMainWindow):
         self.ui.funding_before_check.setChecked(
             settings.value("funding_alert_before", True, type=bool)
         )
-        self.ui.funding_percent_check.setChecked(
-            settings.value("funding_alert_percent", True, type=bool)
-        )
         self.ui.funding_minutes_edit.setText(settings.value("funding_minutes", "15,5"))
         threshold_legacy = settings.value("funding_threshold", "")
         self.ui.funding_threshold_pos_edit.setText(
-            settings.value("funding_threshold_pos", threshold_legacy or "1.0")
+            settings.value("funding_threshold_pos", threshold_legacy or "0")
         )
         self.ui.funding_threshold_neg_edit.setText(
-            settings.value("funding_threshold_neg", threshold_legacy or "1.0")
+            settings.value("funding_threshold_neg", threshold_legacy or "0")
         )
+        funding_vol = int(settings.value("funding_volume", 80))
+        self.ui.funding_volume_slider.setValue(funding_vol)
 
         config.COLORS["accent"] = saved_color
         config.COLORS["accent_alpha"] = saved_alpha
@@ -1052,20 +1050,25 @@ class MainWindow(QMainWindow):
         )[:200]
         self._render_funding_log()
 
-    def append_funding_log_text(self, message):
-        if not message:
+    def append_funding_log_text(self, payload):
+        if not isinstance(payload, dict):
             return
+        kind = payload.get("kind", "log")
         self.funding_alert_counter += 1
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         entry = {
             "index": self.funding_alert_counter,
             "ts": ts,
-            "exchange": "",
-            "symbol": "",
-            "minutes_to": 999999,
-            "signed_rate_pct": 0.0,
-            "message": message,
+            "exchange": payload.get("exchange", ""),
+            "symbol": payload.get("symbol", ""),
+            "minutes_to": payload.get("minutes_to", 999999),
+            "signed_rate_pct": payload.get("signed_rate_pct", 0.0),
         }
+        entry["message"] = (
+            f"{entry['exchange']} {entry['symbol']} — "
+            f"funding {entry['signed_rate_pct']:.3f}% — "
+            f"до фандинга {entry['minutes_to']} мин"
+        )
         self.append_funding_log(entry)
 
     def clear_funding_log(self):
@@ -1091,40 +1094,262 @@ class MainWindow(QMainWindow):
             f"funding {entry['signed_rate_pct']:.3f}% — "
             f"до фандинга {entry['minutes_to']} мин"
         )
+
+        # Определяем сколько бирж выбрано
+        exchanges_count = 0
+        if self.ui.funding_binance_check.isChecked():
+            exchanges_count += 1
+        if self.ui.funding_bybit_check.isChecked():
+            exchanges_count += 1
+        is_multiple_exchanges = exchanges_count > 1
+
+        # Генерируем голосовые сообщения
+        entry["voice_message_ru"] = self._format_funding_message_ru(
+            entry, is_multiple_exchanges
+        )
+        entry["voice_message_en"] = self._format_funding_message_en(
+            entry, is_multiple_exchanges
+        )
+
         self.append_funding_log(entry)
         settings = QSettings("MyTradeTools", "TF-Alerter")
         sound_enabled = settings.value("funding_sound_enabled", True, type=bool)
         tts_enabled = settings.value("funding_tts_enabled", True, type=bool)
+        funding_volume = int(settings.value("funding_volume", 80))
+
         if sound_enabled:
             try:
                 sound_file = settings.value("funding_sound_file", "")
                 if sound_file:
-                    self.logic.play_voice(sound_file, "transition")
+                    self._play_funding_sound(sound_file, funding_volume)
                 else:
-                    self.logic.play_voice(config.SOUND_TICK_LONG, "transition")
+                    self._play_funding_sound(config.SOUND_TICK_LONG, funding_volume)
             except Exception:
                 pass
+
         if tts_enabled:
-            voice_id = settings.value("funding_tts_voice_id", "")
-            self._speak_tts_async(entry["message"], voice_id)
+            settings = QSettings("MyTradeTools", "TF-Alerter")
+            tts_engine = settings.value("funding_tts_engine", "system")
+            tts_voice_id = settings.value("funding_tts_voice_id", "")
+            tts_language = settings.value("funding_tts_language", "ru")
 
-    def _speak_tts_async(self, message, voice_id):
-        def _run_tts(text, tts_voice_id):
+            # Выбираем сообщение на нужном языке
+            message = (
+                entry["voice_message_ru"]
+                if tts_language == "ru"
+                else entry["voice_message_en"]
+            )
+
+            self._speak_tts_async(message, tts_engine, tts_voice_id, sound_enabled)
+
+    def _play_funding_sound(self, filename, volume_percent):
+        """Plays funding sound from transition directory with specified volume"""
+        from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
+        from PyQt6.QtCore import QUrl
+        import config
+
+        path = config.get_sound_path("transition", filename)
+        if not path or not os.path.exists(path):
+            return
+
+        if not hasattr(self, "_funding_player"):
+            self._funding_player = QMediaPlayer()
+            self._funding_output = QAudioOutput()
+            self._funding_player.setAudioOutput(self._funding_output)
             try:
-                import pyttsx3
-
-                engine = pyttsx3.init()
-                if tts_voice_id:
-                    engine.setProperty("voice", tts_voice_id)
-                engine.say(text)
-                engine.runAndWait()
+                default_device = QMediaDevices.defaultAudioOutput()
+                self._funding_output.setDevice(default_device)
             except Exception:
                 pass
+
+        volume = max(0.0, min(1.0, volume_percent / 100.0))
+        self._funding_output.setVolume(volume)
+        self._funding_player.stop()
+        self._funding_player.setSource(QUrl())
+        self._funding_player.setSource(QUrl.fromLocalFile(path))
+        self._funding_player.play()
+
+    def _format_funding_message_ru(self, entry, is_multiple_exchanges=True):
+        """Формирует голосовое сообщение на русском"""
+        # Названия бирж и монет с правильным произношением
+        exchange_names = {"binance": "Бинанс", "bybit": "Байбит"}
+        coin_names = {
+            "BTC": "биткоин",
+            "ETH": "эфир",
+            "BNB": "бинб",
+            "SOL": "сол",
+            "XRP": "рипл",
+            "ADA": "кардано",
+            "DOGE": "доге",
+            "AVAX": "аваланш",
+            "MATIC": "матик",
+            "ARB": "арбитрум",
+            "OP": "оптимизм",
+        }
+
+        exchange = entry["exchange"].lower()
+        symbol = entry["symbol"]
+        rate = entry["signed_rate_pct"]
+        minutes = entry["minutes_to"]
+
+        # Переводим название биржи
+        exchange_ru = exchange_names.get(exchange, exchange)
+
+        # Переводим название монеты (берем только первое совпадение)
+        coin_ru = symbol
+        for coin_code, coin_name in coin_names.items():
+            if coin_code in symbol:
+                coin_ru = coin_name
+                break
+
+        # Определяем направление
+        if rate > 0:
+            direction = "плюс"
+        elif rate < 0:
+            direction = "минус"
+        else:
+            direction = "ноль"
+
+        # Формируем сообщение
+        rate_str = f"{abs(rate):.3f}".replace(".", " точка ")
+
+        # Включаем название биржи только если выбрано больше 1 биржи
+        if is_multiple_exchanges:
+            message = f"{exchange_ru}, {coin_ru}, {direction} {rate_str} процента, через {minutes} минут"
+        else:
+            message = (
+                f"{coin_ru}, {direction} {rate_str} процента, через {minutes} минут"
+            )
+
+        return message
+
+    def _format_funding_message_en(self, entry, is_multiple_exchanges=True):
+        """Формирует голосовое сообщение на английском"""
+        exchange_names = {"binance": "Binance", "bybit": "Bybit"}
+
+        exchange = entry["exchange"].lower()
+        symbol = entry["symbol"]
+        rate = entry["signed_rate_pct"]
+        minutes = entry["minutes_to"]
+
+        # Переводим название биржи
+        exchange_en = exchange_names.get(exchange, exchange)
+
+        # Определяем направление
+        if rate > 0:
+            direction = "positive"
+        elif rate < 0:
+            direction = "negative"
+        else:
+            direction = "zero"
+
+        # Формируем сообщение
+        rate_str = f"{abs(rate):.3f}".replace(".", " point ")
+
+        # Включаем название биржи только если выбрано больше 1 биржи
+        if is_multiple_exchanges:
+            message = f"{exchange_en}, {symbol}, {direction} {rate_str} percent, in {minutes} minutes"
+        else:
+            message = f"{symbol}, {direction} {rate_str} percent, in {minutes} minutes"
+
+        return message
+
+    def _speak_tts_async(self, message, engine_type, voice_id, wait_for_sound=False):
+        """Асинхронное проигрывание TTS с поддержкой разных движков"""
+        import threading
+
+        def _run_tts(text, eng_type, tts_voice_id, delay_ms):
+            if delay_ms > 0:
+                import time
+
+                time.sleep(delay_ms / 1000.0)
+
+            try:
+                if eng_type == "edge":
+                    self._speak_edge_tts(text, tts_voice_id)
+                else:  # system (pyttsx3)
+                    self._speak_system_tts(text, tts_voice_id)
+            except Exception as e:
+                print(f"⚠️ Ошибка TTS: {e}")
+
+        delay_ms = 0
+        if wait_for_sound and hasattr(self, "_funding_player"):
+            try:
+                duration_ms = self._funding_player.duration()
+                if duration_ms > 0:
+                    delay_ms = duration_ms
+                else:
+                    delay_ms = 1000
+            except Exception:
+                delay_ms = 1000
 
         thread = threading.Thread(
-            target=_run_tts, args=(message, voice_id), daemon=True
+            target=_run_tts,
+            args=(message, engine_type, voice_id, delay_ms),
+            daemon=True,
         )
         thread.start()
+
+    def _speak_system_tts(self, text, voice_id):
+        """Проигрывание через системный TTS (pyttsx3)"""
+        try:
+            import pyttsx3
+
+            engine = pyttsx3.init()
+            if voice_id:
+                engine.setProperty("voice", voice_id)
+            engine.say(text)
+            engine.runAndWait()
+            engine.stop()
+        except Exception as e:
+            print(f"⚠️ Ошибка System TTS: {e}")
+
+    def _speak_edge_tts(self, text, voice_name):
+        """Проигрывание через Edge TTS (онлайн)"""
+        try:
+            import edge_tts
+            import asyncio
+            import tempfile
+            from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+            from PyQt6.QtCore import QUrl
+
+            # Проверяем и устанавливаем voice_name с fallback
+            if not voice_name:
+                voice_name = "ru-RU-DmitryNeural"
+
+            async def generate_audio():
+                with tempfile.NamedTemporaryFile(
+                    delete=False, suffix=".mp3"
+                ) as tmp_file:
+                    tmp_path = tmp_file.name
+
+                communicate = edge_tts.Communicate(text, voice_name)
+                await communicate.save(tmp_path)
+                return tmp_path
+
+            # Генерируем аудио синхронно
+            tmp_path = asyncio.run(generate_audio())
+
+            # Проигрываем генерированный файл
+            if not hasattr(self, "_edge_player"):
+                self._edge_player = QMediaPlayer()
+                self._edge_output = QAudioOutput()
+                self._edge_player.setAudioOutput(self._edge_output)
+
+            # Получаем громкость из настроек
+            settings = QSettings("MyTradeTools", "TF-Alerter")
+            volume = settings.value("funding_volume", 80, type=int) / 100.0
+            self._edge_output.setVolume(volume)
+
+            self._edge_player.setSource(QUrl.fromLocalFile(tmp_path))
+            self._edge_player.play()
+
+            # Временные файлы будут автоматически удалены системой из папки Temp
+
+        except ImportError:
+            print("⚠️ Edge TTS не установлен. Установите: pip install edge-tts")
+        except Exception as e:
+            print(f"⚠️ Ошибка Edge TTS: {e}")
 
     def _render_funding_log(self):
         self.ui.funding_log_list.clear()

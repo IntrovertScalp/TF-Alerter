@@ -7,7 +7,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 class FundingMonitor(QObject):
     alert_signal = pyqtSignal(object)
-    log_signal = pyqtSignal(str)
+    log_signal = pyqtSignal(object)
     schedule_signal = pyqtSignal(int)
 
     def __init__(self, ui):
@@ -47,8 +47,8 @@ class FundingMonitor(QObject):
             exchanges.append("bybit")
 
         minutes_text = self.ui.funding_minutes_edit.text().strip() or "15,5"
-        threshold_pos_text = self.ui.funding_threshold_pos_edit.text().strip() or "1.0"
-        threshold_neg_text = self.ui.funding_threshold_neg_edit.text().strip() or "1.0"
+        threshold_pos_text = self.ui.funding_threshold_pos_edit.text().strip() or "0"
+        threshold_neg_text = self.ui.funding_threshold_neg_edit.text().strip() or "0"
 
         return {
             "exchanges": exchanges,
@@ -56,7 +56,6 @@ class FundingMonitor(QObject):
             "threshold_pos_text": threshold_pos_text,
             "threshold_neg_text": threshold_neg_text,
             "alert_before": self.ui.funding_before_check.isChecked(),
-            "alert_percent": self.ui.funding_percent_check.isChecked(),
         }
 
     def _poll_thread(self, settings):
@@ -73,6 +72,9 @@ class FundingMonitor(QObject):
             threshold_neg = self._parse_threshold(settings["threshold_neg_text"])
 
             min_minutes = None
+            # Находим максимальное значение из minutes_list для фильтрации логов
+            max_minutes_filter = max(minutes_list) if minutes_list else 999999
+
             for item in data:
                 next_time = item.get("next_funding_time")
                 if not next_time:
@@ -85,17 +87,39 @@ class FundingMonitor(QObject):
                 if min_minutes is None or minutes_to < min_minutes:
                     min_minutes = minutes_to
 
+                # Логируем все, что проходит порог и в пределах максимального времени
+                if passes_threshold and minutes_to <= max_minutes_filter:
+                    log_key = self._cache_key(
+                        "log",
+                        item["exchange"],
+                        item["symbol"],
+                        next_time,
+                        f"{threshold_pos}:{threshold_neg}",
+                    )
+                    if self._add_cache(log_key):
+                        self.log_signal.emit(
+                            {
+                                "exchange": item["exchange"],
+                                "symbol": item["symbol"],
+                                "signed_rate_pct": signed_rate_pct,
+                                "minutes_to": minutes_to,
+                                "next_funding_time": next_time,
+                                "kind": "log",
+                            }
+                        )
+
+                # Алерт только при точном совпадении минут и если чекбокс включен
                 if settings["alert_before"] and minutes_list and passes_threshold:
                     for target_min in minutes_list:
                         if minutes_to == target_min:
-                            key = self._cache_key(
-                                "before",
+                            alert_key = self._cache_key(
+                                "alert",
                                 item["exchange"],
                                 item["symbol"],
                                 next_time,
                                 f"{target_min}:{threshold_pos}:{threshold_neg}",
                             )
-                            if self._add_cache(key):
+                            if self._add_cache(alert_key):
                                 self.alert_signal.emit(
                                     {
                                         "exchange": item["exchange"],
@@ -103,34 +127,9 @@ class FundingMonitor(QObject):
                                         "signed_rate_pct": signed_rate_pct,
                                         "minutes_to": minutes_to,
                                         "next_funding_time": next_time,
-                                        "kind": "before",
+                                        "kind": "alert",
                                     }
                                 )
-
-                if settings["alert_percent"] and (
-                    threshold_pos is not None or threshold_neg is not None
-                ):
-                    if self._passes_threshold(
-                        signed_rate_pct, threshold_pos, threshold_neg
-                    ):
-                        key = self._cache_key(
-                            "percent",
-                            item["exchange"],
-                            item["symbol"],
-                            next_time,
-                            f"{threshold_pos}:{threshold_neg}",
-                        )
-                        if self._add_cache(key):
-                            self.alert_signal.emit(
-                                {
-                                    "exchange": item["exchange"],
-                                    "symbol": item["symbol"],
-                                    "signed_rate_pct": signed_rate_pct,
-                                    "minutes_to": minutes_to,
-                                    "next_funding_time": next_time,
-                                    "kind": "percent",
-                                }
-                            )
 
             interval_ms = 300000
             if min_minutes is not None and min_minutes <= 60:

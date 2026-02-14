@@ -25,6 +25,13 @@ import ctypes
 from ctypes import wintypes
 
 
+class NoWheelComboBox(QComboBox):
+    """QComboBox, который игнорирует прокрутку мышью (wheel event)"""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 class SoundColumnCheckBox(QCheckBox):
     """Кастомный чекбокс для управления колонками звуков - стиль как на главном окне"""
 
@@ -159,10 +166,12 @@ class SettingsDialog(QDialog):
                 "donate_btn": "♥️ Поддержать",
                 "funding_title": "Фандинг: звук и голос",
                 "funding_sound_enabled": "Включить звук фандинга",
-                "funding_tts_enabled": "Включить голос (TTS)",
+                "funding_tts_enabled": "Включить голосовое сообщение",
                 "funding_sound_file": "Звук фандинга:",
                 "funding_sound_pick": "Выбрать звук",
-                "funding_tts_voice": "Голос TTS:",
+                "funding_tts_engine": "TTS движок:",
+                "funding_tts_language": "Язык голоса:",
+                "funding_tts_voice": "Голос:",
             },
             "EN": {
                 "title": "Settings",
@@ -186,10 +195,12 @@ class SettingsDialog(QDialog):
                 "donate_btn": "♥️ Support",
                 "funding_title": "Funding: sound and voice",
                 "funding_sound_enabled": "Enable funding sound",
-                "funding_tts_enabled": "Enable voice (TTS)",
+                "funding_tts_enabled": "Enable voice message",
                 "funding_sound_file": "Funding sound:",
                 "funding_sound_pick": "Pick sound",
-                "funding_tts_voice": "TTS Voice:",
+                "funding_tts_engine": "TTS Engine:",
+                "funding_tts_language": "Voice Language:",
+                "funding_tts_voice": "Voice:",
             },
         }
 
@@ -206,14 +217,13 @@ class SettingsDialog(QDialog):
         )
         main_container.setGeometry(0, 0, dialog_width, s(560))
 
-        layout = QVBoxLayout(main_container)
-        layout.setContentsMargins(s(20), s(12), s(20), s(15))
-        layout.setSpacing(s(12))
-        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        # Фиксированный header (не скроллится)
+        header_frame = QWidget(main_container)
+        header_frame.setGeometry(0, 0, dialog_width, s(50))
+        header_frame.setStyleSheet("background: transparent;")
 
-        # Заголовок с кнопкой закрытия
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout = QHBoxLayout(header_frame)
+        header_layout.setContentsMargins(s(20), s(12), s(20), s(8))
         header_layout.setSpacing(0)
 
         self.title = QLabel("Настройки")
@@ -250,7 +260,22 @@ class SettingsDialog(QDialog):
         """
         )
         header_layout.addWidget(close_btn)
-        layout.addLayout(header_layout)
+
+        # Create a scroll area for the settings content (starts below header)
+        main_scroll = QScrollArea(main_container)
+        main_scroll.setWidgetResizable(True)
+        main_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        main_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        main_scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+        )
+        main_scroll.setGeometry(0, s(50), dialog_width, s(510))
+
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
+        layout.setContentsMargins(s(20), s(4), s(20), s(15))
+        layout.setSpacing(s(12))
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # Кнопки для информации и донатов
         info_layout = QHBoxLayout()
@@ -430,17 +455,13 @@ class SettingsDialog(QDialog):
         funding_layout.addLayout(funding_check_row)
 
         sound_row = QHBoxLayout()
-        self.funding_sound_label = QLabel(self.translations["RU"]["funding_sound_file"])
-        self.funding_sound_label.setStyleSheet(
+        self.funding_sound_label_static = QLabel(
+            self.translations["RU"]["funding_sound_file"]
+        )
+        self.funding_sound_label_static.setStyleSheet(
             f"color: {config.COLORS['text']}; font-size: {s(11)}px; border: none; background: transparent;"
         )
-        self.funding_sound_value = QLabel("-")
-        self.funding_sound_value.setStyleSheet(
-            f"color: {config.COLORS['border']}; font-size: {s(10)}px; border: none; background: transparent;"
-        )
-        self.funding_sound_btn = QPushButton(
-            self.translations["RU"]["funding_sound_pick"]
-        )
+        self.funding_sound_btn = QPushButton("funding_alert.wav")
         self.funding_sound_btn.setFixedHeight(s(30))
         self.funding_sound_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.funding_sound_btn.setStyleSheet(
@@ -475,14 +496,52 @@ class SettingsDialog(QDialog):
             }}
             """
         )
+        self.funding_sound_btn.setMaximumWidth(s(200))
         self.funding_sound_btn.clicked.connect(self._select_funding_sound)
         self.funding_sound_play_btn.clicked.connect(self._play_funding_sound)
-        sound_row.addWidget(self.funding_sound_label)
-        sound_row.addWidget(self.funding_sound_value, 1)
+        sound_row.addWidget(self.funding_sound_label_static)
         sound_row.addWidget(self.funding_sound_btn)
         sound_row.addWidget(self.funding_sound_play_btn)
+        sound_row.addStretch()
         funding_layout.addLayout(sound_row)
 
+        # TTS Движ Engine выбор
+        engine_row = QHBoxLayout()
+        engine_label = QLabel(self.translations["RU"]["funding_tts_engine"])
+        engine_label.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: {s(11)}px; border: none; background: transparent;"
+        )
+        self.funding_tts_engine_combo = NoWheelComboBox()
+        self.funding_tts_engine_combo.addItem("System TTS (Windows)", "system")
+        self.funding_tts_engine_combo.addItem(
+            "Edge TTS (онлайн, лучшее качество)", "edge"
+        )
+        self.funding_tts_engine_combo.setStyleSheet(self._combo_style())
+        self.funding_tts_engine_combo.currentIndexChanged.connect(
+            self._on_tts_engine_changed
+        )
+        engine_row.addWidget(engine_label)
+        engine_row.addWidget(self.funding_tts_engine_combo, 1)
+        funding_layout.addLayout(engine_row)
+
+        # TTS Язык выбор
+        lang_row = QHBoxLayout()
+        lang_label = QLabel(self.translations["RU"]["funding_tts_language"])
+        lang_label.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: {s(11)}px; border: none; background: transparent;"
+        )
+        self.funding_tts_language_combo = NoWheelComboBox()
+        self.funding_tts_language_combo.addItem("Русский", "ru")
+        self.funding_tts_language_combo.addItem("English", "en")
+        self.funding_tts_language_combo.setStyleSheet(self._combo_style())
+        self.funding_tts_language_combo.currentIndexChanged.connect(
+            self._on_tts_language_changed
+        )
+        lang_row.addWidget(lang_label)
+        lang_row.addWidget(self.funding_tts_language_combo, 1)
+        funding_layout.addLayout(lang_row)
+
+        # TTS Голос выбор
         voice_row = QHBoxLayout()
         self.funding_tts_voice_label = QLabel(
             self.translations["RU"]["funding_tts_voice"]
@@ -490,14 +549,36 @@ class SettingsDialog(QDialog):
         self.funding_tts_voice_label.setStyleSheet(
             f"color: {config.COLORS['text']}; font-size: {s(11)}px; border: none; background: transparent;"
         )
-        self.funding_tts_voice_combo = QComboBox()
+        self.funding_tts_voice_combo = NoWheelComboBox()
         self.funding_tts_voice_combo.setStyleSheet(self._combo_style())
+        self.funding_tts_voice_combo.currentIndexChanged.connect(
+            self._on_tts_voice_changed
+        )
         if self.funding_tts_voice_combo.lineEdit():
             self.funding_tts_voice_combo.lineEdit().setAlignment(
                 Qt.AlignmentFlag.AlignCenter
             )
+        self.funding_tts_play_btn = QPushButton("▶")
+        self.funding_tts_play_btn.setFixedSize(s(28), s(30))
+        self.funding_tts_play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.funding_tts_play_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {config.COLORS['background']};
+                color: {config.COLORS['text']};
+                border: 1px solid {config.COLORS['border']};
+                border-radius: {s(5)}px;
+                font-size: {s(11)}px;
+            }}
+            QPushButton:hover {{
+                border: 1px solid #1e90ff;
+            }}
+            """
+        )
+        self.funding_tts_play_btn.clicked.connect(self._play_funding_tts)
         voice_row.addWidget(self.funding_tts_voice_label)
-        voice_row.addWidget(self.funding_tts_voice_combo)
+        voice_row.addWidget(self.funding_tts_voice_combo, 1)
+        voice_row.addWidget(self.funding_tts_play_btn)
         funding_layout.addLayout(voice_row)
 
         layout.addWidget(funding_frame)
@@ -529,16 +610,6 @@ class SettingsDialog(QDialog):
         sounds_layout = QVBoxLayout(sounds_container)
         sounds_layout.setContentsMargins(s(8), 0, s(8), 0)
         sounds_layout.setSpacing(s(4))
-
-        sounds_scroll = QScrollArea()
-        sounds_scroll.setWidgetResizable(True)
-        sounds_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        sounds_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        sounds_scroll.setViewportMargins(s(8), 0, s(8), 0)
-        sounds_scroll.setStyleSheet("QScrollArea { background: transparent; }")
-        sounds_scroll.setWidget(sounds_container)
 
         self.sound_buttons = {}
         # Списки всех кнопок (выбора и проигрывания) для каждого типа звука
@@ -803,7 +874,9 @@ class SettingsDialog(QDialog):
 
             sounds_layout.addWidget(tf_card)
 
-        layout.addWidget(sounds_scroll)
+        layout.addWidget(sounds_container)
+
+        main_scroll.setWidget(scroll_content)
 
         # Кнопки
         btn_layout = QHBoxLayout()
@@ -1062,37 +1135,123 @@ class SettingsDialog(QDialog):
         if btn:
             btn.setText(os.path.basename(target_name))
 
-    def _load_tts_voices(self):
+    def _load_voice_files(self):
+        """Загружает список голосов в зависимости от выбранного TTS движка"""
+        engine = self.funding_tts_engine_combo.currentData()
+        language = self.funding_tts_language_combo.currentData()
+
+        self.funding_tts_voice_combo.blockSignals(True)
+        try:
+            self.funding_tts_voice_combo.clear()
+
+            if engine == "system":
+                self._load_system_voices(language)
+            elif engine == "edge":
+                self._load_edge_voices(language)
+
+            # Восстанавливаем сохраненный голос (если он был установлен ранее)
+            if hasattr(self, "_saved_voice_id") and self._saved_voice_id:
+                voice_idx = self.funding_tts_voice_combo.findData(self._saved_voice_id)
+                if voice_idx >= 0:
+                    self.funding_tts_voice_combo.setCurrentIndex(voice_idx)
+                    return
+
+            # Если голос не найден или не был сохранен, выбираем первый
+            if self.funding_tts_voice_combo.count() > 0:
+                self.funding_tts_voice_combo.setCurrentIndex(0)
+        finally:
+            self.funding_tts_voice_combo.blockSignals(False)
+
+    def _load_system_voices(self, language):
+        """Загружает системные TTS голоса (pyttsx3)"""
         try:
             import pyttsx3
 
             engine = pyttsx3.init()
             voices = engine.getProperty("voices") or []
-            self.funding_tts_voice_combo.clear()
-            self.funding_tts_voice_combo.addItem("Default", "")
+
             for voice in voices:
-                name = getattr(voice, "name", None) or "Voice"
+                name = getattr(voice, "name", "Voice")
                 vid = getattr(voice, "id", "")
-                langs = "".join(
-                    [str(lang).lower() for lang in getattr(voice, "languages", [])]
-                )
-                is_ru = "ru" in langs or "russian" in name.lower()
-                is_en = "en" in langs or "english" in name.lower()
-                if is_ru:
-                    label = f"[RU] {name}"
-                elif is_en:
-                    label = f"[EN] {name}"
-                else:
-                    label = f"[Other] {name}"
-                self.funding_tts_voice_combo.addItem(label, vid)
-            if self.funding_tts_voice_combo.count() == 1:
+
+                # Фильтруем по языку
+                if language == "ru":
+                    if (
+                        "ru" in name.lower()
+                        or "russian" in name.lower()
+                        or "pavel" in name.lower()
+                        or "irina" in name.lower()
+                    ):
+                        self.funding_tts_voice_combo.addItem(name, vid)
+                elif language == "en":
+                    if (
+                        "en" in name.lower()
+                        or "english" in name.lower()
+                        or "zira" in name.lower()
+                        or "david" in name.lower()
+                    ):
+                        self.funding_tts_voice_combo.addItem(name, vid)
+
+            if self.funding_tts_voice_combo.count() == 0:
+                # Если голосов нет после фильтрации, добавляем все
                 for voice in voices:
                     name = getattr(voice, "name", "Voice")
                     vid = getattr(voice, "id", "")
                     self.funding_tts_voice_combo.addItem(name, vid)
-        except Exception:
-            self.funding_tts_voice_combo.clear()
-            self.funding_tts_voice_combo.addItem("Default", "")
+
+            engine.stop()
+        except Exception as e:
+            print(f"⚠️ Ошибка загрузки системных голосов: {e}")
+
+    def _load_edge_voices(self, language):
+        """Загружает Edge TTS голоса"""
+        if language == "ru":
+            # Русские голоса Edge TTS
+            self.funding_tts_voice_combo.addItem(
+                "[RU-M] Dmitry (мужской)", "ru-RU-DmitryNeural"
+            )
+            self.funding_tts_voice_combo.addItem(
+                "[RU-F] Svetlana (женский)", "ru-RU-SvetlanaNeural"
+            )
+        elif language == "en":
+            # Английские голоса Edge TTS
+            self.funding_tts_voice_combo.addItem(
+                "[EN-M] Guy (мужской)", "en-US-GuyNeural"
+            )
+            self.funding_tts_voice_combo.addItem(
+                "[EN-F] Aria (женский)", "en-US-AriaNeural"
+            )
+
+    def _on_tts_engine_changed(self, index):
+        """Обработчик смены TTS движка"""
+        # Сохраняем выбранный движок
+        engine_id = self.funding_tts_engine_combo.currentData()
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        settings.setValue("funding_tts_engine", engine_id)
+        # Очищаем сохраненный голос при смене движка
+        self._saved_voice_id = ""
+        self._load_voice_files()
+
+    def _on_tts_language_changed(self, index):
+        """Обработчик смены языка"""
+        # Сохраняем выбранный язык
+        language = self.funding_tts_language_combo.currentData()
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        settings.setValue("funding_tts_language", language)
+        # Очищаем сохраненный голос при смене языка
+        self._saved_voice_id = ""
+        self._load_voice_files()
+
+    def _on_tts_voice_changed(self, index):
+        """Обработчик смены голоса TTS"""
+        # Сохраняем выбранный голос
+        voice_id = self.funding_tts_voice_combo.currentData()
+        voice_id = str(voice_id) if voice_id is not None else ""
+        self._saved_voice_id = voice_id
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        settings.setValue("funding_tts_voice_id", voice_id)
+        settings.setValue("funding_voice_file", voice_id)
+        settings.sync()
 
     def _select_funding_sound(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1116,7 +1275,7 @@ class SettingsDialog(QDialog):
         settings.setValue("funding_sound_file", target_name)
         settings.sync()
         self.funding_sound_file = target_name
-        self.funding_sound_value.setText(os.path.basename(target_name))
+        self.funding_sound_btn.setText(os.path.basename(target_name))
 
     def _play_funding_sound(self):
         settings = QSettings("MyTradeTools", "TF-Alerter")
@@ -1128,9 +1287,110 @@ class SettingsDialog(QDialog):
             return
         self.preview_player.stop()
         self.preview_player.setSource(QUrl())
-        self.preview_player.setSource(QUrl.fromLocalFile(path))
         self.preview_output.setVolume(1.0)
+        self.preview_player.setSource(QUrl.fromLocalFile(path))
         self.preview_player.play()
+
+    def _play_funding_tts(self):
+        """\u041fроигрывает тестовое TTS сообщение"""
+        try:
+            import threading
+
+            engine_type = self.funding_tts_engine_combo.currentData()
+            language = self.funding_tts_language_combo.currentData()
+            voice_id = self.funding_tts_voice_combo.currentData()
+
+            # Полные тестовые сообщения
+            test_messages = {
+                "ru": "Бинанс, биткоин, плюс ноль точка пять процента, через 15 минут",
+                "en": "Binance, bitcoin, positive zero point five percent, in 15 minutes",
+            }
+
+            test_text = test_messages.get(language, test_messages["en"])
+
+            def speak_thread():
+                if engine_type == "system":
+                    self._speak_system_tts(test_text, voice_id)
+                elif engine_type == "edge":
+                    self._speak_edge_tts(test_text, voice_id, language)
+
+            thread = threading.Thread(target=speak_thread, daemon=True)
+            thread.start()
+        except Exception as e:
+            print(f"⚠️ Ошибка проигрывания TTS: {e}")
+
+    def _speak_system_tts(self, text, voice_id):
+        """Проигрывает TTS через System TTS (pyttsx3)"""
+        try:
+            import pyttsx3
+
+            engine = pyttsx3.init()
+            if voice_id:
+                engine.setProperty("voice", voice_id)
+            engine.say(text)
+            engine.runAndWait()
+            engine.stop()
+        except Exception as e:
+            print(f"⚠️ System TTS error: {e}")
+
+    def _speak_edge_tts(self, text, voice_id, language):
+        """Проигрывает TTS через Edge TTS"""
+        try:
+            import asyncio
+            import tempfile
+            import edge_tts
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+            # Проверяем и устанавливаем voice_id с fallback
+            if not voice_id:
+                voice_id = (
+                    "ru-RU-DmitryNeural" if language == "ru" else "en-US-GuyNeural"
+                )
+
+            print(f"🔊 Edge TTS: voice_id={voice_id}, language={language}")
+
+            async def generate_audio():
+                with tempfile.NamedTemporaryFile(
+                    suffix=".mp3", delete=False
+                ) as tmp_file:
+                    tmp_path = tmp_file.name
+
+                communicate = edge_tts.Communicate(text, voice_id)
+                await communicate.save(tmp_path)
+                return tmp_path
+
+            # Генерируем аудио синхронно
+            tmp_path = asyncio.run(generate_audio())
+
+            import os
+
+            if os.path.exists(tmp_path):
+                file_size = os.path.getsize(tmp_path)
+                print(f"✅ Файл создан: {tmp_path} ({file_size} bytes)")
+            else:
+                print(f"❌ Файл не создан: {tmp_path}")
+                return
+
+            # Используем существующий preview_player вместо создания нового
+            self.preview_player.stop()
+            self.preview_player.setSource(QUrl())
+            self.preview_output.setVolume(1.0)
+            self.preview_player.setSource(QUrl.fromLocalFile(tmp_path))
+            print(f"▶️ Вызов play()...")
+            self.preview_player.play()
+
+            # Проверяем состояние плеера
+            state = self.preview_player.playbackState()
+            print(f"🎵 Playback state: {state}")
+
+            # Временные файлы будут автоматически удалены системой
+
+        except Exception as e:
+            print(f"⚠️ Edge TTS error: {e}")
+            import traceback
+
+            traceback.print_exc()
 
     def _play_sound(self, tf_key, kind):
         if kind == "main":
@@ -1246,17 +1506,41 @@ class SettingsDialog(QDialog):
             settings.value("funding_tts_enabled", True, type=bool)
         )
         self.funding_sound_file = settings.value("funding_sound_file", "")
-        self.funding_sound_value.setText(
+        self.funding_sound_btn.setText(
             os.path.basename(self.funding_sound_file)
             if self.funding_sound_file
-            else "-"
+            else "funding_alert.wav"
         )
-        self._load_tts_voices()
+
+        # Загружаем сохраненные TTS настройки БЕЗ активации сигналов
+        saved_engine = settings.value("funding_tts_engine", "system")
+        engine_idx = self.funding_tts_engine_combo.findData(saved_engine)
+        if engine_idx >= 0:
+            self.funding_tts_engine_combo.blockSignals(True)
+            self.funding_tts_engine_combo.setCurrentIndex(engine_idx)
+            self.funding_tts_engine_combo.blockSignals(False)
+
+        saved_language = settings.value("funding_tts_language", "ru")
+        lang_idx = self.funding_tts_language_combo.findData(saved_language)
+        if lang_idx >= 0:
+            self.funding_tts_language_combo.blockSignals(True)
+            self.funding_tts_language_combo.setCurrentIndex(lang_idx)
+            self.funding_tts_language_combo.blockSignals(False)
+
+        # Загружаем сохраненный ID голоса перед загрузкой списка
+        # Fallback на старый/параллельный ключ для совместимости
         saved_voice_id = settings.value("funding_tts_voice_id", "")
-        if saved_voice_id:
-            idx = self.funding_tts_voice_combo.findData(saved_voice_id)
-            if idx >= 0:
-                self.funding_tts_voice_combo.setCurrentIndex(idx)
+        legacy_voice_id = settings.value("funding_voice_file", "")
+        if legacy_voice_id and legacy_voice_id != saved_voice_id:
+            saved_voice_id = legacy_voice_id
+        if not saved_voice_id:
+            saved_voice_id = legacy_voice_id
+        self._saved_voice_id = str(saved_voice_id) if saved_voice_id is not None else ""
+        if self._saved_voice_id:
+            settings.setValue("funding_tts_voice_id", self._saved_voice_id)
+
+        # Теперь загружаем голоса с учетом выбранного движка и языка
+        self._load_voice_files()
 
         # Сбрасываем режим захвата
         self.capturing_hotkey = False
@@ -1282,8 +1566,7 @@ class SettingsDialog(QDialog):
         self.funding_title.setText(t["funding_title"])
         self.funding_sound_check.setText(t["funding_sound_enabled"])
         self.funding_tts_check.setText(t["funding_tts_enabled"])
-        self.funding_sound_label.setText(t["funding_sound_file"])
-        self.funding_sound_btn.setText(t["funding_sound_pick"])
+        self.funding_sound_label_static.setText(t["funding_sound_file"])
         self.funding_tts_voice_label.setText(t["funding_tts_voice"])
 
         # Обновляем названия таймфреймов
@@ -1517,13 +1800,25 @@ class SettingsDialog(QDialog):
         settings.setValue("funding_sound_enabled", self.funding_sound_check.isChecked())
         settings.setValue("funding_tts_enabled", self.funding_tts_check.isChecked())
         settings.setValue(
-            "funding_tts_voice_id",
-            (
-                self.funding_tts_voice_combo.currentData()
-                if self.funding_tts_voice_combo.count() > 0
-                else ""
-            ),
+            "funding_tts_engine",
+            self.funding_tts_engine_combo.currentData() or "system",
         )
+        settings.setValue(
+            "funding_tts_language",
+            self.funding_tts_language_combo.currentData() or "ru",
+        )
+        selected_voice_id = (
+            self.funding_tts_voice_combo.currentData()
+            if self.funding_tts_voice_combo.count() > 0
+            else ""
+        )
+        selected_voice_id = (
+            str(selected_voice_id) if selected_voice_id is not None else ""
+        )
+        self._saved_voice_id = selected_voice_id
+        settings.setValue("funding_tts_voice_id", selected_voice_id)
+        settings.setValue("funding_voice_file", selected_voice_id)
+        settings.sync()
 
         self.accept()
 
