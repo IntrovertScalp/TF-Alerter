@@ -34,28 +34,37 @@ class ColorPickerDialog(QDialog):
         self.original_color = current_color or config.COLORS.get("accent", "#1e90ff")
         self.original_alpha = current_alpha
         self.bg_enabled = bool(bg_enabled)
-        self.bg_color = QColor(bg_color if bg_color else "#000000")
+        bg_color_raw = str(bg_color if bg_color else "#000000")
+        if len(bg_color_raw) == 9:
+            self.bg_color = QColor(bg_color_raw[:7])
+            self.bg_alpha = int(bg_color_raw[7:9], 16)
+        else:
+            self.bg_color = QColor(bg_color_raw)
+            self.bg_alpha = 255
         self.original_bg_enabled = bool(bg_enabled)
         self.original_bg_color = self.bg_color.name()
+        self.original_bg_alpha = self.bg_alpha
 
         # Словари переводов
         self.translations = {
             "RU": {
                 "title": "Выбор цвета",
-                "color": "Цвет:",
-                "opacity": "Прозрачность:",
+                "clock_color": "Цвет часов:",
+                "clock_opacity": "Прозрачность часов:",
                 "bg_enabled": "Фон под часами",
                 "bg_color": "Цвет фона:",
+                "bg_opacity": "Прозрачность фона:",
                 "pick_color": "Выбрать цвет",
                 "cancel": "Отмена",
                 "ok": "OK",
             },
             "EN": {
                 "title": "Color Picker",
-                "color": "Color:",
-                "opacity": "Opacity:",
+                "clock_color": "Clock color:",
+                "clock_opacity": "Clock opacity:",
                 "bg_enabled": "Background under clock",
                 "bg_color": "Background color:",
+                "bg_opacity": "Background opacity:",
                 "pick_color": "Pick Color",
                 "cancel": "Cancel",
                 "ok": "OK",
@@ -67,7 +76,7 @@ class ColorPickerDialog(QDialog):
         self.current_lang = settings.value("language", "RU")
 
         self.setWindowTitle(self.translations[self.current_lang]["title"])
-        self.setFixedSize(400, 320)
+        self.setFixedSize(420, 370)
 
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -83,7 +92,7 @@ class ColorPickerDialog(QDialog):
             }}
         """
         )
-        main_container.setGeometry(0, 0, 400, 320)
+        main_container.setGeometry(0, 0, 420, 370)
 
         layout = QVBoxLayout(main_container)
         layout.setContentsMargins(20, 15, 20, 15)
@@ -105,7 +114,7 @@ class ColorPickerDialog(QDialog):
 
         # Цвет
         color_layout = QHBoxLayout()
-        color_label = QLabel(self.translations[self.current_lang]["color"])
+        color_label = QLabel(self.translations[self.current_lang]["clock_color"])
         color_label.setStyleSheet(
             f"color: {config.COLORS['text']}; font-size: 12px; border: none; background: transparent;"
         )
@@ -120,7 +129,7 @@ class ColorPickerDialog(QDialog):
 
         # Прозрачность
         opacity_layout = QHBoxLayout()
-        opacity_label = QLabel(self.translations[self.current_lang]["opacity"])
+        opacity_label = QLabel(self.translations[self.current_lang]["clock_opacity"])
         opacity_label.setStyleSheet(
             f"color: {config.COLORS['text']}; font-size: 12px; border: none; background: transparent;"
         )
@@ -175,6 +184,31 @@ class ColorPickerDialog(QDialog):
         bg_color_layout.addStretch()
         bg_color_layout.addWidget(self.bg_color_btn)
         layout.addLayout(bg_color_layout)
+
+        bg_opacity_layout = QHBoxLayout()
+        bg_opacity_label = QLabel(self.translations[self.current_lang]["bg_opacity"])
+        bg_opacity_label.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: 12px; border: none; background: transparent;"
+        )
+        self.bg_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.bg_opacity_slider.setMinimum(0)
+        self.bg_opacity_slider.setMaximum(255)
+        self.bg_opacity_slider.setValue(int(self.bg_alpha))
+        self.bg_opacity_slider.setStyleSheet(self._slider_style())
+        self.bg_opacity_slider.setEnabled(self.bg_enabled)
+        self.bg_opacity_slider.valueChanged.connect(self.on_bg_opacity_changed)
+
+        self.bg_opacity_value = QLabel(f"{int(self.bg_alpha)}")
+        self.bg_opacity_value.setFixedWidth(40)
+        self.bg_opacity_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bg_opacity_value.setStyleSheet(
+            f"color: {config.COLORS['text']}; font-size: 12px; border: none; background: transparent;"
+        )
+
+        bg_opacity_layout.addWidget(bg_opacity_label)
+        bg_opacity_layout.addWidget(self.bg_opacity_slider)
+        bg_opacity_layout.addWidget(self.bg_opacity_value)
+        layout.addLayout(bg_opacity_layout)
 
         layout.addSpacing(10)
 
@@ -271,13 +305,33 @@ class ColorPickerDialog(QDialog):
         )
 
     def pick_bg_color(self):
-        color = QColorDialog.getColor(
-            self.bg_color, self, self.translations[self.current_lang]["bg_color"]
-        )
+        if not hasattr(self, "bg_color_dialog"):
+            self.bg_color_dialog = None
+
+        if self.bg_color_dialog is None:
+            self.bg_color_dialog = QColorDialog(self.bg_color, self)
+            self.bg_color_dialog.setOption(
+                QColorDialog.ColorDialogOption.ShowAlphaChannel, False
+            )
+            self.bg_color_dialog.currentColorChanged.connect(self.on_bg_color_selected)
+            self.bg_color_dialog.finished.connect(self.on_bg_color_dialog_finished)
+            self.bg_color_dialog.show()
+
+    def on_bg_color_selected(self, color):
         if color.isValid():
             self.bg_color = color
             self.update_bg_color_button()
             self.preview_changes()
+
+    def on_bg_color_dialog_finished(self, result):
+        if result == 0:
+            self.bg_color = QColor(self.original_bg_color)
+            self.bg_alpha = int(self.original_bg_alpha)
+            self.bg_opacity_slider.setValue(self.bg_alpha)
+            self.bg_opacity_value.setText(str(self.bg_alpha))
+            self.update_bg_color_button()
+            self.preview_changes()
+        self.bg_color_dialog = None
 
     def on_bg_enabled_changed(self, state):
         if isinstance(state, Qt.CheckState):
@@ -285,6 +339,12 @@ class ColorPickerDialog(QDialog):
         else:
             self.bg_enabled = int(state) == Qt.CheckState.Checked.value
         self.bg_color_btn.setEnabled(self.bg_enabled)
+        self.bg_opacity_slider.setEnabled(self.bg_enabled)
+        self.preview_changes()
+
+    def on_bg_opacity_changed(self, value):
+        self.bg_alpha = int(value)
+        self.bg_opacity_value.setText(str(int(value)))
         self.preview_changes()
 
     def pick_color(self):
@@ -349,7 +409,7 @@ class ColorPickerDialog(QDialog):
                     self.selected_alpha,
                     selected_font,
                     self.bg_enabled,
-                    self.bg_color.name(),
+                    self.get_bg_color(),
                 )
             except Exception:
                 pass
@@ -372,7 +432,7 @@ class ColorPickerDialog(QDialog):
         return bool(self.bg_enabled)
 
     def get_bg_color(self):
-        return self.bg_color.name()
+        return f"{self.bg_color.name()}{int(self.bg_alpha):02x}"
 
     def mousePressEvent(self, event):
         """Начало перетаскивания окна"""
@@ -411,7 +471,7 @@ class ColorPickerDialog(QDialog):
                     self.original_alpha,
                     selected_font,
                     self.original_bg_enabled,
-                    self.original_bg_color,
+                    f"{self.original_bg_color}{int(self.original_bg_alpha):02x}",
                 )
             except Exception:
                 pass

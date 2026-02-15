@@ -63,9 +63,9 @@ class OverlayClock(QWidget):
                 bg_alpha = int(self.bg_color[7:9], 16)
                 bg_rgba = f"rgba({int(self.bg_color[1:3], 16)}, {int(self.bg_color[3:5], 16)}, {int(self.bg_color[5:7], 16)}, {bg_alpha})"
             else:
-                bg_rgba = f"rgba({int(self.bg_color[1:3], 16)}, {int(self.bg_color[3:5], 16)}, {int(self.bg_color[5:7], 16)}, 140)"
+                bg_rgba = f"rgba({int(self.bg_color[1:3], 16)}, {int(self.bg_color[3:5], 16)}, {int(self.bg_color[5:7], 16)}, 255)"
             bg_style = (
-                f"background-color: {bg_rgba}; padding: 2px 8px; border-radius: 8px;"
+                f"background-color: {bg_rgba}; padding: 1px 4px; border-radius: 5px;"
             )
 
         # Чистый прозрачный фон. Тянуть можно только за прорисованные части цифр.

@@ -212,6 +212,10 @@ class SettingsDialog(QDialog):
                 "funding_tts_engine": "TTS движок:",
                 "funding_tts_language": "Язык голоса:",
                 "funding_tts_voice": "Голос:",
+                "funding_tts_engine_system": "System TTS (Windows)",
+                "funding_tts_engine_edge": "Edge TTS (онлайн, лучшее качество)",
+                "funding_tts_lang_ru": "Русский",
+                "funding_tts_lang_en": "English",
             },
             "EN": {
                 "title": "Settings",
@@ -231,7 +235,7 @@ class SettingsDialog(QDialog):
                 "enable_voice": "Enable",
                 "enable_tick": "Enable",
                 "enable_transition": "Enable",
-                "about_btn": "ℹ️ About the Program",
+                "about_btn": "ℹ️ Info",
                 "donate_btn": "♥️ Support",
                 "funding_title": "Funding: sound and voice",
                 "funding_sound_enabled": "Enable funding sound",
@@ -241,6 +245,10 @@ class SettingsDialog(QDialog):
                 "funding_tts_engine": "TTS Engine:",
                 "funding_tts_language": "Voice Language:",
                 "funding_tts_voice": "Voice:",
+                "funding_tts_engine_system": "System TTS (Windows)",
+                "funding_tts_engine_edge": "Edge TTS (online, better quality)",
+                "funding_tts_lang_ru": "Russian",
+                "funding_tts_lang_en": "English",
             },
         }
 
@@ -309,7 +317,7 @@ class SettingsDialog(QDialog):
         main_scroll.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
         )
-        main_scroll.setGeometry(0, s(50), dialog_width, s(510))
+        main_scroll.setGeometry(s(6), s(50), dialog_width - s(12), s(504))
 
         scroll_content = QWidget()
         layout = QVBoxLayout(scroll_content)
@@ -320,7 +328,8 @@ class SettingsDialog(QDialog):
         # Кнопки для информации и донатов
         info_layout = QHBoxLayout()
         self.about_btn = QPushButton(self.translations["RU"]["about_btn"])
-        self.about_btn.setMaximumWidth(s(150))
+        self.about_btn.setMinimumWidth(s(170))
+        self.about_btn.setMaximumWidth(s(190))
         self.about_btn.clicked.connect(self._open_about)
         self.about_btn.setStyleSheet(
             f"""
@@ -340,7 +349,8 @@ class SettingsDialog(QDialog):
         )
 
         self.donate_btn = QPushButton(self.translations["RU"]["donate_btn"])
-        self.donate_btn.setMaximumWidth(s(150))
+        self.donate_btn.setMinimumWidth(s(170))
+        self.donate_btn.setMaximumWidth(s(190))
         self.donate_btn.clicked.connect(self._open_donate)
         self.donate_btn.setStyleSheet(
             f"""
@@ -393,7 +403,7 @@ class SettingsDialog(QDialog):
         )
         self.scale_combo = QComboBox()
         self.scale_combo.addItems(
-            ["80%", "90%", "100%", "110%", "120%", "130%", "140%", "150%"]
+            ["90%", "100%", "110%", "120%", "130%", "140%", "150%"]
         )
         self.scale_combo.setStyleSheet(self._combo_style())
         if self.scale_combo.lineEdit():
@@ -549,8 +559,10 @@ class SettingsDialog(QDialog):
 
         # TTS Движ Engine выбор
         engine_row = QHBoxLayout()
-        engine_label = QLabel(self.translations["RU"]["funding_tts_engine"])
-        engine_label.setStyleSheet(
+        self.funding_tts_engine_label = QLabel(
+            self.translations["RU"]["funding_tts_engine"]
+        )
+        self.funding_tts_engine_label.setStyleSheet(
             f"color: {config.COLORS['text']}; font-size: {s(11)}px; border: none; background: transparent;"
         )
         self.funding_tts_engine_combo = NoWheelComboBox()
@@ -562,14 +574,16 @@ class SettingsDialog(QDialog):
         self.funding_tts_engine_combo.currentIndexChanged.connect(
             self._on_tts_engine_changed
         )
-        engine_row.addWidget(engine_label)
+        engine_row.addWidget(self.funding_tts_engine_label)
         engine_row.addWidget(self.funding_tts_engine_combo, 1)
         funding_layout.addLayout(engine_row)
 
         # TTS Язык выбор
         lang_row = QHBoxLayout()
-        lang_label = QLabel(self.translations["RU"]["funding_tts_language"])
-        lang_label.setStyleSheet(
+        self.funding_tts_language_label = QLabel(
+            self.translations["RU"]["funding_tts_language"]
+        )
+        self.funding_tts_language_label.setStyleSheet(
             f"color: {config.COLORS['text']}; font-size: {s(11)}px; border: none; background: transparent;"
         )
         self.funding_tts_language_combo = NoWheelComboBox()
@@ -579,7 +593,7 @@ class SettingsDialog(QDialog):
         self.funding_tts_language_combo.currentIndexChanged.connect(
             self._on_tts_language_changed
         )
-        lang_row.addWidget(lang_label)
+        lang_row.addWidget(self.funding_tts_language_label)
         lang_row.addWidget(self.funding_tts_language_combo, 1)
         funding_layout.addLayout(lang_row)
 
@@ -623,7 +637,12 @@ class SettingsDialog(QDialog):
         voice_row.addWidget(self.funding_tts_play_btn)
         funding_layout.addLayout(voice_row)
 
-        layout.addWidget(funding_frame)
+        funding_container = QWidget()
+        funding_container_layout = QVBoxLayout(funding_container)
+        funding_container_layout.setContentsMargins(s(8), 0, s(8), 0)
+        funding_container_layout.setSpacing(0)
+        funding_container_layout.addWidget(funding_frame)
+        layout.addWidget(funding_container)
 
         layout.addSpacing(s(15))
 
@@ -1477,6 +1496,8 @@ class SettingsDialog(QDialog):
 
         # Масштаб
         saved_scale = settings.value("interface_scale_text", "100%")
+        if saved_scale == "80%":
+            saved_scale = "90%"
         self.scale_combo.setCurrentText(saved_scale)
 
         # Горячая клавиша
@@ -1609,7 +1630,10 @@ class SettingsDialog(QDialog):
         self.funding_sound_check.setText(t["funding_sound_enabled"])
         self.funding_tts_check.setText(t["funding_tts_enabled"])
         self.funding_sound_label_static.setText(t["funding_sound_file"])
+        self.funding_tts_engine_label.setText(t["funding_tts_engine"])
+        self.funding_tts_language_label.setText(t["funding_tts_language"])
         self.funding_tts_voice_label.setText(t["funding_tts_voice"])
+        self._refresh_funding_combo_texts(lang)
 
         # Обновляем названия таймфреймов
         for tf_key, label in self.tf_labels.items():
@@ -1620,6 +1644,32 @@ class SettingsDialog(QDialog):
         invalid_texts = ["Не задана", "Нажмите клавишу...", "Not set", "Press a key..."]
         if current_hotkey in invalid_texts:
             self.hotkey_input.setText(t["not_set"])
+
+    def _refresh_funding_combo_texts(self, lang):
+        """Обновляет отображаемые тексты в комбобоксах TTS без изменения data."""
+        t = self.translations[lang]
+
+        system_idx = self.funding_tts_engine_combo.findData("system")
+        if system_idx >= 0:
+            self.funding_tts_engine_combo.setItemText(
+                system_idx, t["funding_tts_engine_system"]
+            )
+        edge_idx = self.funding_tts_engine_combo.findData("edge")
+        if edge_idx >= 0:
+            self.funding_tts_engine_combo.setItemText(
+                edge_idx, t["funding_tts_engine_edge"]
+            )
+
+        ru_idx = self.funding_tts_language_combo.findData("ru")
+        if ru_idx >= 0:
+            self.funding_tts_language_combo.setItemText(
+                ru_idx, t["funding_tts_lang_ru"]
+            )
+        en_idx = self.funding_tts_language_combo.findData("en")
+        if en_idx >= 0:
+            self.funding_tts_language_combo.setItemText(
+                en_idx, t["funding_tts_lang_en"]
+            )
 
     def start_capture(self):
         """Начинает захват клавиши"""

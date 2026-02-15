@@ -14,15 +14,18 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QListWidgetItem,
     QToolTip,
+    QMessageBox,
 )
 from PyQt6.QtGui import QColor, QIcon, QFont, QGuiApplication, QCursor
-from PyQt6.QtCore import Qt, QSettings, QTimer, QEvent
+from PyQt6.QtCore import Qt, QSettings, QTimer, QEvent, QLockFile, QStandardPaths
 import config
 import gui
 import logic
 from hotkey_manager import HotkeyManager
 from color_picker_dialog import ColorPickerDialog
+from font_picker_dialog import FontPickerDialog
 from funding_alerts import FundingMonitor
+from donate_dialog import DonateDialog
 
 # Установка App User Model ID для иконки на панели задач (Windows)
 try:
@@ -36,6 +39,7 @@ except Exception:
 # Логирование - отключено для экономии памяти и ресурсов
 LOG_ENABLED = False
 LOG_FILE = "debug.log"
+_APP_INSTANCE_LOCK = None
 
 
 def log_write(msg):
@@ -46,6 +50,23 @@ def log_write(msg):
             f.write(msg + "\n")
     except:
         pass
+
+
+def _acquire_instance_lock():
+    app_data_dir = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppDataLocation
+    )
+    if not app_data_dir:
+        app_data_dir = config.BASE_DIR
+
+    os.makedirs(app_data_dir, exist_ok=True)
+    lock_path = os.path.join(app_data_dir, "tf-alerter.lock")
+
+    lock = QLockFile(lock_path)
+    lock.setStaleLockTime(0)
+    if not lock.tryLock(100):
+        return None
+    return lock
 
 
 class MainWindow(QMainWindow):
@@ -127,15 +148,15 @@ class MainWindow(QMainWindow):
         self._edge_ready_timer.timeout.connect(self._drain_edge_ready_paths)
         self._edge_ready_timer.start()
         self._pending_tts_entries = {}
+        self._donate_dialog = None
+        self._donate_dialog_cache_key = None
         self._funding_tts_timer = QTimer()
         self._funding_tts_timer.setSingleShot(True)
         self._funding_tts_timer.timeout.connect(self._flush_funding_tts_queue)
 
         # --- ПОДКЛЮЧЕНИЕ СИГНАЛОВ ---
         self.ui.color_btn.clicked.connect(self.change_color)
-        self.ui.clock_font_combo.currentTextChanged.connect(
-            self.on_overlay_font_changed
-        )
+        self.ui.clock_font_btn.clicked.connect(self.open_font_dialog)
         self.ui.lang_sel.currentTextChanged.connect(self.ui.change_language)
 
         # Подключаем переключатель отображения часов
@@ -228,6 +249,8 @@ class MainWindow(QMainWindow):
         self.funding_log_timer = QTimer()
         self.funding_log_timer.timeout.connect(self._update_funding_log_realtime)
         self.funding_log_timer.start(1000)  # Каждую секунду
+
+        QTimer.singleShot(1200, self._warmup_donate_dialog)
 
         # Устанавливаем eventFilter для снятия выделения
         self.ui.funding_log_list.installEventFilter(self)
@@ -732,10 +755,32 @@ class MainWindow(QMainWindow):
 
     def open_donate(self):
         """Открывает окно 'Поддержать проект'"""
-        from donate_dialog import DonateDialog
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        cache_key = (
+            settings.value("language", "RU"),
+            settings.value("interface_scale_text", "100%"),
+        )
 
-        dialog = DonateDialog(self)
-        dialog.exec()
+        if self._donate_dialog is None or self._donate_dialog_cache_key != cache_key:
+            self._donate_dialog = DonateDialog(self)
+            self._donate_dialog_cache_key = cache_key
+
+        self._donate_dialog.exec()
+
+    def _warmup_donate_dialog(self):
+        try:
+            if self._donate_dialog is not None:
+                return
+            settings = QSettings("MyTradeTools", "TF-Alerter")
+            cache_key = (
+                settings.value("language", "RU"),
+                settings.value("interface_scale_text", "100%"),
+            )
+            self._donate_dialog = DonateDialog(self)
+            self._donate_dialog_cache_key = cache_key
+        except Exception:
+            self._donate_dialog = None
+            self._donate_dialog_cache_key = None
 
     def open_settings(self):
         """Открывает окно настроек"""
@@ -894,7 +939,7 @@ class MainWindow(QMainWindow):
 
             # 3. Принудительно увеличиваем кнопки (чтобы текст не заходил под них)
             self.ui.color_btn.setFixedSize(int(125 * factor), int(38 * factor))
-            self.ui.clock_font_combo.setMinimumWidth(int(210 * factor))
+            self.ui.clock_font_btn.setMinimumWidth(int(155 * factor))
             self.ui.lang_sel.setFixedSize(int(65 * factor), int(28 * factor))
 
             # 4. Стили контейнера
@@ -912,6 +957,17 @@ class MainWindow(QMainWindow):
             # 6. Масштабируем комбобокс режима оверлея
             if hasattr(self.ui, "overlay_mode_combo"):
                 self.ui.overlay_mode_combo.setMinimumWidth(int(260 * factor))
+
+            # 7. Funding: лог увеличивается плавнее, а индикаторы бирж масштабируются с интерфейсом
+            if hasattr(self.ui, "funding_log_list"):
+                log_height = int(150 * (1.0 + max(0.0, factor - 1.0) * 0.45))
+                self.ui.funding_log_list.setFixedHeight(max(130, log_height))
+
+            if hasattr(self.ui, "funding_status_label"):
+                status_font_px = max(8, int(9 * factor))
+                self.ui.funding_status_label.setStyleSheet(
+                    f"color:#777; font-size: {status_font_px}px;"
+                )
 
         finally:
             self.setUpdatesEnabled(True)
@@ -1033,7 +1089,7 @@ class MainWindow(QMainWindow):
         if not isinstance(saved_font, str) or not saved_font.strip():
             saved_font = "Arial"
         self.current_overlay_font = saved_font
-        self.ui.clock_font_combo.setCurrentFont(QFont(saved_font))
+        self.ui.clock_font_btn.setText(saved_font)
 
         self.overlay_bg_enabled = settings.value("overlay_bg_enabled", False, type=bool)
         saved_bg_color = settings.value("overlay_bg_color", "#000000")
@@ -2081,11 +2137,31 @@ class MainWindow(QMainWindow):
         self.overlay_move_locked = bool(state)
         self.logic.overlay.move_locked = self.overlay_move_locked
 
-    def on_overlay_font_changed(self, font_name):
+    def on_overlay_font_changed(self, font_name, save=True):
         selected_family = (font_name or "").strip() or "Arial"
         self.current_overlay_font = selected_family
+        if hasattr(self.ui, "clock_font_btn"):
+            self.ui.clock_font_btn.setText(selected_family)
         self.apply_overlay_visual()
-        self.save_settings()
+        if save:
+            self.save_settings()
+
+    def open_font_dialog(self):
+        current_family = (self.current_overlay_font or "").strip() or "Arial"
+        original_family = current_family
+        dialog = FontPickerDialog(
+            self,
+            current_family,
+            preview_callback=lambda family: self.on_overlay_font_changed(
+                family, save=False
+            ),
+        )
+        if dialog.exec():
+            selected_family = dialog.get_selected_font_family()
+            if selected_family:
+                self.on_overlay_font_changed(selected_family, save=True)
+        else:
+            self.on_overlay_font_changed(original_family, save=False)
 
     def changeEvent(self, event):
         """Перехватываем изменения состояния окна"""
@@ -2154,6 +2230,33 @@ if __name__ == "__main__":
 
     # Установка иконки приложения для панели задач и Alt+Tab
     app.setWindowIcon(QIcon(config.LOGO_PATH))
+
+    _APP_INSTANCE_LOCK = _acquire_instance_lock()
+    if _APP_INSTANCE_LOCK is None:
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        lang = str(settings.value("language", "RU")).upper()
+        title = "TF-Alerter"
+        text = (
+            "Программа уже запущена. Второй экземпляр заблокирован."
+            if lang == "RU"
+            else "Application is already running. Second instance is blocked."
+        )
+        QMessageBox.information(None, title, text)
+        sys.exit(0)
+
+    if not config.validate_crypto_addresses_integrity():
+        settings = QSettings("MyTradeTools", "TF-Alerter")
+        lang = str(settings.value("language", "RU")).upper()
+        title = "TF-Alerter"
+        text = (
+            "Обнаружено изменение донат-адресов. Приложение будет закрыто."
+            if lang == "RU"
+            else "Donation address tampering detected. The app will close."
+        )
+        QMessageBox.critical(None, title, text)
+        sys.exit(1)
+
+    app._instance_lock = _APP_INSTANCE_LOCK
 
     window = MainWindow()
     window.show()

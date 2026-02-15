@@ -19,15 +19,15 @@ class AboutDialog(QDialog):
         self.translations = {
             "RU": {
                 "title": "О программе",
-                "version": "Версия 1.0",
-                "description": "Бесплатный таймер с оповещениями для трейдеров.\nУведомляет о закрытии свечей на выбранных таймфреймах\nс голосовыми оповещениями и визуальными часами.",
+                "version": f"Версия {config.APP_VERSION}",
+                "description": "Бесплатный алертер для трейдеров с фокусом на фандинг и таймфреймы.\nПоказывает предстоящие и сработавшие фандинг-события,\nозвучивает сигналы и отображает overlay-часы в реальном времени.",
                 "developer": "Разработчик:",
                 "youtube_btn": "🎥 YouTube",
             },
             "EN": {
-                "title": "About",
-                "version": "Version 1.0",
-                "description": "Free timer with alerts for traders.\nNotifies about candle closures on selected timeframes\nwith voice notifications and visual clocks.",
+                "title": "Info",
+                "version": f"Version {config.APP_VERSION}",
+                "description": "Free trader alerter focused on funding and timeframe events.\nShows upcoming and triggered funding events,\nspeaks alerts, and displays real-time overlay clocks.",
                 "developer": "Developer:",
                 "youtube_btn": "🎥 YouTube",
             },
@@ -47,7 +47,7 @@ class AboutDialog(QDialog):
         def s(px):
             return max(1, int(px * factor))
 
-        self.setFixedSize(s(420), s(360))
+        self.setFixedSize(s(420), s(390))
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
@@ -62,11 +62,11 @@ class AboutDialog(QDialog):
             }}
         """
         )
-        main_container.setGeometry(0, 0, s(420), s(360))
+        main_container.setGeometry(0, 0, s(420), s(390))
 
         layout = QVBoxLayout(main_container)
-        layout.setContentsMargins(s(25), s(15), s(25), s(20))
-        layout.setSpacing(s(15))
+        layout.setContentsMargins(s(25), s(14), s(25), s(16))
+        layout.setSpacing(s(10))
 
         # Заголовок с кнопкой закрытия
         header_layout = QHBoxLayout()
@@ -136,7 +136,7 @@ class AboutDialog(QDialog):
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version)
 
-        layout.addSpacing(10)
+        layout.addSpacing(4)
 
         # Описание программы
         description = QLabel(self.t["description"])
@@ -152,7 +152,7 @@ class AboutDialog(QDialog):
         description.setWordWrap(True)
         layout.addWidget(description)
 
-        layout.addSpacing(10)
+        layout.addSpacing(4)
 
         # Разработчик
         dev_label = QLabel(self.t["developer"])

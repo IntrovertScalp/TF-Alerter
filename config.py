@@ -1,6 +1,8 @@
 import os
 import sys
 import shutil
+import json
+import hashlib
 
 
 # --- 1. СИСТЕМНЫЕ НАСТРОЙКИ ---
@@ -49,7 +51,7 @@ LOGO_PATH = _validate_paths()
 
 # --- 2. НАСТРОЙКИ ПРИЛОЖЕНИЯ ---
 APP_NAME = "TF-Alerter"
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 WINDOW_SIZE = (360, 580)
 
 # --- ИНФОРМАЦИЯ ОБ АВТОРЕ ---
@@ -89,6 +91,33 @@ CRYPTO_ADDRESSES = {
         "address": "0x416E6544D8DCD9C4dDa2C10D394480F89642FaD7",
     },
 }
+
+_EXPECTED_CRYPTO_ADDRESSES_HASH = (
+    "576bc9e88e7b7dca9e19ea1b24b59eff391523fce8bf354f2f2d56880d104d3c"
+)
+
+
+def _crypto_addresses_hash() -> str:
+    payload = {
+        key: {
+            "address": value.get("address", ""),
+            "network": value.get("network", ""),
+            "label": value.get("label", ""),
+        }
+        for key, value in CRYPTO_ADDRESSES.items()
+    }
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def validate_crypto_addresses_integrity() -> bool:
+    try:
+        return _crypto_addresses_hash() == _EXPECTED_CRYPTO_ADDRESSES_HASH
+    except Exception:
+        return False
+
 
 # --- 3. ЦВЕТОВАЯ СХЕМА ---
 COLORS = {

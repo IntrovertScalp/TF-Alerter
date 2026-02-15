@@ -134,7 +134,7 @@ class ClickableQRLabel(QLabel):
 
         # Заголовок с кнопкой закрытия
         header_layout = QHBoxLayout()
-        title = QLabel("QR-код для сканирования")
+        title = QLabel(t.get("qr_scan_title", "QR code to scan"))
         title.setStyleSheet(
             f"color: #1e90ff; font-size: {self.parent_dialog._s(14)}px; font-weight: bold; border: none; background: transparent;"
         )
@@ -195,7 +195,7 @@ class ClickableQRLabel(QLabel):
         controls_layout = QHBoxLayout()
         controls_layout.addSpacing(self.parent_dialog._s(10))
 
-        size_label = QLabel("Размер:")
+        size_label = QLabel(t.get("size", "Size:"))
         size_label.setStyleSheet(
             f"color: {config.COLORS['text']}; font-size: {self.parent_dialog._s(10)}px; border: none; background: transparent;"
         )
@@ -269,7 +269,7 @@ class ClickableQRLabel(QLabel):
         layout.addWidget(address_label)
 
         # Кнопка закрытия
-        close_dialog_btn = QPushButton("Закрыть")
+        close_dialog_btn = QPushButton(t.get("close", "Close"))
         close_dialog_btn.setFixedHeight(self.parent_dialog._s(32))
         close_dialog_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_dialog_btn.clicked.connect(dialog.close)
@@ -342,7 +342,10 @@ class DonateDialog(QDialog):
                 "scroll_hint": "⬇ Прокрутите вниз чтобы увидеть все адреса ⬇",
                 "close": "Закрыть",
                 "qr_title": "QR-код",
+                "qr_scan_title": "QR-код для сканирования",
+                "size": "Размер:",
                 "copy_btn": "📋 Копировать адрес",
+                "copied": "✓ Скопировано!",
             },
             "EN": {
                 "title": "Support the project",
@@ -351,7 +354,10 @@ class DonateDialog(QDialog):
                 "scroll_hint": "⬇ Scroll down to see all addresses ⬇",
                 "close": "Close",
                 "qr_title": "QR Code",
+                "qr_scan_title": "QR code to scan",
+                "size": "Size:",
                 "copy_btn": "📋 Copy Address",
+                "copied": "✓ Copied!",
             },
         }
 
@@ -832,7 +838,7 @@ class DonateDialog(QDialog):
             original_stylesheet = copy_btn.styleSheet()
 
             # Меняем текст и стиль кнопки
-            copy_btn.setText("✓ Скопировано!")
+            copy_btn.setText(self.t.get("copied", "✓ Copied!"))
             copy_btn.setStyleSheet(
                 f"""
                 QPushButton {{

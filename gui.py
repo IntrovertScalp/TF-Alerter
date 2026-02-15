@@ -12,7 +12,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QStyledItemDelegate,
-    QFontComboBox,
     QTabWidget,
     QTabBar,
     QGraphicsOpacityEffect,
@@ -266,9 +265,10 @@ class UI_Widget(QWidget):
         self.old_pos = None
         self.trans = {
             "ru": {
-                "main_tab": "Главное",
+                "main_tab": "Главная",
                 "funding_tab": "Фандинг",
                 "funding_title": "Алерты фандинга",
+                "funding_enable": "Включить алерты фандинга",
                 "funding_exchanges": "Биржи:",
                 "funding_binance": "Binance",
                 "funding_bybit": "Bybit",
@@ -298,7 +298,7 @@ class UI_Widget(QWidget):
                 "scale": "МАСШТАБ ИНТЕРФЕЙСА",
                 "show": "Отображать часы",
                 "lock_move": "Блокировать перемещение часов",
-                "btn": "ЦВЕТ ЧАСОВ",
+                "btn": "Цвет часов",
                 "font_btn": "Шрифт",
                 "mode": "Режим:",
                 "select_app": "Выбрать приложения",
@@ -320,6 +320,7 @@ class UI_Widget(QWidget):
                 "main_tab": "Main",
                 "funding_tab": "Funding",
                 "funding_title": "Funding Alerts",
+                "funding_enable": "Enable funding alerts",
                 "funding_exchanges": "Exchanges:",
                 "funding_binance": "Binance",
                 "funding_bybit": "Bybit",
@@ -343,12 +344,13 @@ class UI_Widget(QWidget):
                 "funding_upcoming": "Upcoming",
                 "funding_triggered": "Triggered",
                 "funding_clear": "Clear log",
+                "funding_refresh": "Refresh",
                 "vol": "VOLUME",
                 "font": "CLOCK SIZE",
                 "scale": "INTERFACE SCALE",
                 "show": "Display Clock",
                 "lock_move": "Lock Clock Movement",
-                "btn": "CLOCK COLOR",
+                "btn": "Clock Color",
                 "font_btn": "Font",
                 "mode": "Mode:",
                 "select_app": "Select Applications",
@@ -377,10 +379,10 @@ class UI_Widget(QWidget):
             f"QTabWidget::pane {{ border: none; margin: 0px; }} "
             f"QTabWidget::tab-bar {{ left: 8px; }} "
             f"QTabBar {{ background: {config.COLORS['background']}; margin: 0px; }} "
-            f"QTabBar::tab {{ background: {config.COLORS['panel']}; color: {config.COLORS['text']}; padding: 6px 10px; margin: 0px; border: 1px solid {config.COLORS['border']}; border-bottom: none; min-width: 0px; }} "
+            f"QTabBar::tab {{ background: {config.COLORS['panel']}; color: {config.COLORS['text']}; padding: 6px 10px; margin: 0px; border: 1px solid {config.COLORS['border']}; border-bottom: none; min-width: 0px; border-top-left-radius: 8px; border-top-right-radius: 8px; }} "
             f"QTabBar::tab:first {{ margin-left: 8px; }} "
             f"QTabBar::tab:last {{ margin-right: 0px; }} "
-            f"QTabBar::tab:selected {{ background: #1e90ff; color: black; border: 2px solid #1e90ff; border-bottom: none; font-weight: bold; }} "
+            f"QTabBar::tab:selected {{ background: #1e90ff; color: black; border: 2px solid #1e90ff; border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px; font-weight: bold; }} "
         )
         self.root_layout.addWidget(self.tabs)
 
@@ -507,6 +509,7 @@ class UI_Widget(QWidget):
         )
         self._sync_color_btn_size()
         QTimer.singleShot(0, self._sync_color_btn_size)
+        color_layout.addStretch()
         color_layout.addWidget(self.color_btn)
         color_layout.addStretch()
 
@@ -521,11 +524,16 @@ class UI_Widget(QWidget):
         )
         font_layout.addWidget(self.clock_font_label)
 
-        self.clock_font_combo = QFontComboBox()
-        self.clock_font_combo.setStyleSheet(self._combo_style())
-        self.clock_font_combo.setMinimumWidth(210)
-        self.clock_font_combo.setToolTip("Выбор шрифта часов")
-        font_layout.addWidget(self.clock_font_combo)
+        self.clock_font_btn = QPushButton(self.selected_clock_font)
+        self.clock_font_btn.setStyleSheet(
+            f"QPushButton {{ color: #1e90ff; border: 1px solid #1e90ff; border-radius: 8px; font-weight: bold; font-size: 9px; padding: 3px 8px; }} "
+            "QPushButton:hover { background: #1e90ff; color: black; }"
+        )
+        self.clock_font_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clock_font_btn.setMinimumWidth(155)
+        self.clock_font_btn.setMaximumWidth(170)
+        self.clock_font_btn.setToolTip("Выбор шрифта часов")
+        font_layout.addWidget(self.clock_font_btn)
         font_layout.addStretch()
 
         overlay_lay.addLayout(font_layout)
@@ -539,17 +547,17 @@ class UI_Widget(QWidget):
         funding_layout.setContentsMargins(15, 10, 15, 20)
         funding_layout.setSpacing(10)
 
-        funding_title = QLabel(self.trans["ru"]["funding_title"])
-        funding_title.setStyleSheet(
+        self.funding_title_label = QLabel(self.trans["ru"]["funding_title"])
+        self.funding_title_label.setStyleSheet(
             f"color: {config.COLORS['text']}; font-size: 12px; font-weight: bold;"
         )
-        funding_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        funding_layout.addWidget(funding_title)
+        self.funding_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        funding_layout.addWidget(self.funding_title_label)
 
         # Кнопка включения/выключения фандинга
         enable_row = QHBoxLayout()
         self.funding_enable_check = TFCheckBox(
-            "Включить алерты фандинга", "funding_enable"
+            self.trans["ru"]["funding_enable"], "funding_enable"
         )
         self.funding_enable_check.setStyleSheet(self._tf_check_style())
         self.funding_enable_check.setChecked(True)
@@ -772,8 +780,9 @@ class UI_Widget(QWidget):
     def _sync_color_btn_size(self):
         try:
             label_hint = self.l_size.sizeHint()
-            self.color_btn.setMinimumSize(label_hint.width(), label_hint.height())
-            self.color_btn.setMaximumSize(label_hint.width(), label_hint.height())
+            button_w = max(70, int(label_hint.width() * 0.78))
+            self.color_btn.setMinimumSize(button_w, label_hint.height())
+            self.color_btn.setMaximumSize(button_w, label_hint.height())
         except Exception:
             pass
 
@@ -805,6 +814,8 @@ class UI_Widget(QWidget):
 
         self.tabs.setTabText(0, t["main_tab"])
         self.tabs.setTabText(1, t["funding_tab"])
+        self.funding_title_label.setText(t["funding_title"])
+        self.funding_enable_check.setText(t["funding_enable"])
         self.funding_exchanges_label.setText(t["funding_exchanges"])
         self.funding_binance_check.setText(t["funding_binance"])
         self.funding_bybit_check.setText(t["funding_bybit"])
